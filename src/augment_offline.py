@@ -265,9 +265,8 @@ def scale_translate(seq: np.ndarray,
                     scale_range=SCALE_RANGE,
                     translate_std=TRANSLATE_STD) -> np.ndarray:
     """
-    ขยาย/ย่อ + เลื่อนตำแหน่งในภาพเล็กน้อย
-    - ทำเฉพาะ x และ y (pose + มือ)
-    - สมมติจุดกลางภาพคือ (0.5, 0.5)
+    (Version: Relative Coordinates)
+    ขยาย/ย่อ + เลื่อนตำแหน่ง
     """
     st = seq.copy()
     T = st.shape[0]
@@ -279,18 +278,16 @@ def scale_translate(seq: np.ndarray,
     scale = np.random.uniform(scale_range[0], scale_range[1])
     tx = np.random.normal(loc=0.0, scale=translate_std)
     ty = np.random.normal(loc=0.0, scale=translate_std)
-    cx, cy = 0.5, 0.5
+    
+    # จุดหมุนคือ (0,0) เพราะเป็นพิกัดเทียบไหล่
+    cx, cy = 0.0, 0.0
 
     for t in range(T):
-        # x
         st[t, x_idx] = (st[t, x_idx] - cx) * scale + cx + tx
-        # y
         st[t, y_idx] = (st[t, y_idx] - cy) * scale + cy + ty
 
-    # clamp ให้อยู่ใน [0,1]
-    st[:, x_idx] = np.clip(st[:, x_idx], 0.0, 1.0)
-    st[:, y_idx] = np.clip(st[:, y_idx], 0.0, 1.0)
-
+    # ไม่ต้อง Clip ค่า (เพราะ Relative Coordinate ติดลบได้)
+    
     return st
 
 

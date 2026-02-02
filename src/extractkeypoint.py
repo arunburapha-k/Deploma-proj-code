@@ -5,7 +5,6 @@ import os
 
 # --- 1. ตั้งค่า MediaPipe Holistic ---
 mp_holistic = mp.solutions.holistic
-# (เราไม่ต้องการ mp_drawing เพราะเราจะไม่วาดผลลัพธ์)
 
 def mediapipe_process(image, model):
     """
@@ -15,54 +14,76 @@ def mediapipe_process(image, model):
     image_rgb.flags.writeable = False
     results = model.process(image_rgb)
     image_rgb.flags.writeable = True
-    # (เราไม่ต้องแปลงสีกลับ เพราะเราจะไม่แสดงผล)
     return results
 
 def extract_keypoints(results):
     """
-    ‼️ (สำคัญ) สกัดจุดเฉพาะ Pose, LH, RH (ไม่เอา Face) ‼️
-    รวม 258 ค่า (Pose: 33*4 + LH: 21*3 + RH: 21*3)
+    ‼️ (ปรับปรุงใหม่) สกัดจุดแบบ Relative Coordinates ‼️
+    โดยเทียบกับจุดกึ่งกลางไหล่ (Shoulder Center)
+    รวม 258 ค่าเท่าเดิม (แต่ค่า x, y จะเปลี่ยนไป)
     """
-    # 1. Pose (33 landmarks * 4 ค่า = 132)
-    pose = np.array([[res.x, res.y, res.z, res.visibility] for res in results.pose_landmarks.landmark]).flatten() if results.pose_landmarks else np.zeros(33*4)
+    # 1. หาจุดอ้างอิง (Reference Point): กึ่งกลางไหล่ซ้าย(11)-ขวา(12)
+    ref_x, ref_y = 0.5, 0.5 # ค่า Default เผื่อไม่เจอตัว
     
-    # 2. มือซ้าย (21 landmarks * 3 ค่า = 63)
-    lh = np.array([[res.x, res.y, res.z] for res in results.left_hand_landmarks.landmark]).flatten() if results.left_hand_landmarks else np.zeros(21*3)
+    if results.pose_landmarks:
+        # Landmark 11 = ไหล่ซ้าย, 12 = ไหล่ขวา
+        landmarks = results.pose_landmarks.landmark
+        ref_x = (landmarks[11].x + landmarks[12].x) / 2
+        ref_y = (landmarks[11].y + landmarks[12].y) / 2
+
+    # ฟังก์ชันย่อย: แปลงเป็น Relative (จุด - จุดอ้างอิง)
+    def get_relative_coords(landmarks_obj, include_vis=False):
+        if not landmarks_obj:
+            return np.zeros(33*4) if include_vis else np.zeros(21*3)
+        
+        data = []
+        for res in landmarks_obj.landmark:
+            # --- หัวใจสำคัญ: ลบจุดอ้างอิงออก ---
+            rel_x = res.x - ref_x
+            rel_y = res.y - ref_y
+            # -------------------------------
+            
+            if include_vis:
+                data.append([rel_x, rel_y, res.z, res.visibility])
+            else:
+                data.append([rel_x, rel_y, res.z])
+        
+        return np.array(data).flatten()
+
+    # 2. เรียกใช้กับทุกส่วน
+    pose = get_relative_coords(results.pose_landmarks, include_vis=True)
+    lh   = get_relative_coords(results.left_hand_landmarks, include_vis=False)
+    rh   = get_relative_coords(results.right_hand_landmarks, include_vis=False)
     
-    # 3. มือขวา (21 landmarks * 3 ค่า = 63)
-    rh = np.array([[res.x, res.y, res.z] for res in results.right_hand_landmarks.landmark]).flatten() if results.right_hand_landmarks else np.zeros(21*3)
-    
-    # รวมทั้งหมด
+    # รวมทั้งหมด (Shape ต้องได้ 258 เท่าเดิม)
     return np.concatenate([pose, lh, rh])
 
-# --- 3. ตั้งค่าหลัก (ตรงตามโครงสร้างของคุณ) ---
+# --- 3. ตั้งค่าหลัก ---
 
 RAW_DATA_PATH = os.path.join('data', 'raw')
 PROCESSED_DATA_PATH = os.path.join('data', 'processed')
 
+# ⚠️ อย่าลืมแก้ชื่อท่าตรงนี้ให้ครบนะครับ
 actions = np.array([
-    # 'distention',
-    # 'fever',
-    # 'feverish',
-    # 'no_action'
-    # 'wounded',
+    'distention',
+    'fever',
+    'feverish',
+    'no_action',
+    'wounded',
+    # ใส่ท่าอื่นๆ เพิ่มตรงนี้...
 ])
 
-# จำนวนเฟรมที่จะสุ่มดึงจากวิดีโอ
 sequence_length = 30
-# จำนวน features ที่เราสกัด (258)
-num_features = 258 # (132 + 63 + 63)
+num_features = 258 
 
 # --- 4. สร้างโฟลเดอร์ปลายทาง ---
 for action in actions:
-    # จะสร้าง data/processed/fever, data/processed/feverish, ...
     action_path = os.path.join(PROCESSED_DATA_PATH, action)
     os.makedirs(action_path, exist_ok=True)
 print(f"Ensured '{PROCESSED_DATA_PATH}' folders exist.")
 
-
 # --- 5. ลูปหลักสำหรับประมวลผลวิดีโอ ---
-print("--- Starting Video Preprocessing (No Face) ---")
+print("--- Starting Video Preprocessing (Relative Coordinates) ---")
 
 with mp_holistic.Holistic(min_detection_confidence=0.5, min_tracking_confidence=0.5) as holistic:
     
@@ -82,10 +103,9 @@ with mp_holistic.Holistic(min_detection_confidence=0.5, min_tracking_confidence=
         for sequence_idx, video_file in enumerate(video_files):
             video_path = os.path.join(action_raw_path, video_file)
             
-            sequence_data = [] # เก็บ keypoints ของ 30 เฟรม
+            sequence_data = [] 
             cap = cv2.VideoCapture(video_path)
             
-            # (A) คำนวณดัชนีเฟรมที่จะดึง (Frame Sampling)
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             
             if total_frames < sequence_length:
@@ -95,30 +115,23 @@ with mp_holistic.Holistic(min_detection_confidence=0.5, min_tracking_confidence=
                 
             frame_indices = np.linspace(0, total_frames - 1, sequence_length, dtype=int)
             
-            # (B) วนลูปดึงเฉพาะเฟรมที่เลือก
             for frame_idx in frame_indices:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx) # กระโดดไปที่เฟรม
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx) 
                 success, frame = cap.read()
                 
                 if not success:
-                    sequence_data.append(np.zeros(num_features)) # เติม 0 ถ้าเฟรมมีปัญหา
+                    sequence_data.append(np.zeros(num_features))
                     continue
 
-                # ประมวลผลด้วย MediaPipe (ไม่วาด)
                 results = mediapipe_process(frame, holistic)
-                
-                # สกัด Keypoints (258 features)
-                keypoints = extract_keypoints(results)
+                keypoints = extract_keypoints(results) # ใช้ฟังก์ชันใหม่ตรงนี้
                 sequence_data.append(keypoints)
 
             cap.release()
             
-            # (C) บันทึกข้อมูล
-            # sequence_data จะมี shape (30, 258)
             npy_path = os.path.join(action_processed_path, f'{sequence_idx}.npy')
             np.save(npy_path, np.array(sequence_data))
             
-            # (แสดง % ความคืบหน้า)
             print(f'\r  Processed {sequence_idx + 1}/{len(video_files)} videos...', end='')
         
         print(f'\nAction "{action}" complete.')
