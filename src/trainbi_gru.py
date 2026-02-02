@@ -18,7 +18,7 @@ from tensorflow.keras.optimizers import Adam
 # ---------------- 0) EXPERIMENT CONFIG ----------------
 # ตรงนี้คือส่วนที่เปลี่ยนบ่อย เวลาอยากลองหลายแบบ
 
-EXPERIMENT_NAME = "exp_gru_v1"
+EXPERIMENT_NAME = "exp_gru_v2"
 RNN_TYPE = "lstm"                  # "gru" หรือ "lstm"
 CONV_FILTERS = 64
 RNN_UNITS    = 64
