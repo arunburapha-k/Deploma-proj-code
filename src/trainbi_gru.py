@@ -30,19 +30,21 @@ from tensorflow.keras.optimizers import Adam
 import tensorflow.keras.backend as K
 
 # ---------------- 0) EXPERIMENT CONFIG ----------------
-EXPERIMENT_NAME = "exp_gru_attention_v4"  # เปลี่ยนชื่อนิดนึงจะได้รู้ว่าเป็นเวอร์ชันใหม่
+EXPERIMENT_NAME = "exp_gru_attention_v3_preme_back"  # เปลี่ยนชื่อนิดนึงจะได้รู้ว่าเป็นเวอร์ชันใหม่
 RNN_TYPE = "gru"
-CONV_FILTERS = 64
-RNN_UNITS = 64
-DENSE_UNITS1 = 64
-DENSE_UNITS2 = 32
-DROPOUT_RATE = 0.6
+CONV_FILTERS = 64      # เดิม 64 / 128
+RNN_UNITS    = 64      # เดิม 64 / 128
+DENSE_UNITS1 = 64      # เดิม 64 / 128
+DENSE_UNITS2 = 32       # เดิม 32 / 64
+
+# ต้องเพิ่ม Dropout เพื่อคุมความเข้มข้นการเทรน
+DROPOUT_RATE = 0.3
 
 LEARNING_RATE = 1e-3
-NUM_EPOCHS = 100  # เพิ่มรอบหน่อย เพราะมี LR Scheduler ช่วย
+NUM_EPOCHS = 50  # เพิ่มรอบหน่อย เพราะมี LR Scheduler ช่วย
 BATCH_SIZE = 32
 
-EARLY_STOPPING_PATIENCE = 15  # รอได้นานขึ้นอีกนิด
+EARLY_STOPPING_PATIENCE = 20  # รอได้นานขึ้นอีกนิด
 
 # class balancing
 USE_CLASS_WEIGHT = True
@@ -57,11 +59,9 @@ TEST_DIR = os.path.join(DATA_DIR, "processed_test")
 
 actions = np.array(
     [
-        # 'distention',
         "fever",
         "feverish",
         "no_action",
-        # 'wounded'
     ]
 )
 
@@ -223,10 +223,21 @@ model.add(
 model.add(BatchNormalization())
 model.add(MaxPooling1D(pool_size=2))
 
-# 2. RNN (Bi-GRU/LSTM)
-# ★★★ จุดที่ 2: ต้องเปิด return_sequences=True เพื่อส่งต่อให้ Attention ★★★
+# # 2. RNN (Bi-GRU/LSTM)
+# # ★★★ จุดที่ 2: ต้องเปิด return_sequences=True เพื่อส่งต่อให้ Attention ★★★
 rnn_layer_cls = GRU if RNN_TYPE.lower() == "gru" else LSTM
 model.add(Bidirectional(rnn_layer_cls(RNN_UNITS, return_sequences=True)))
+
+# # 2. RNN (Stacked Bi-GRU/LSTM) - อัปเกรดเป็น 2 ชั้น
+# rnn_layer_cls = GRU if RNN_TYPE.lower() == "gru" else LSTM
+# # --- ชั้นที่ 1 ---
+# # return_sequences=True เพื่อส่งต่อให้ชั้นถัดไป
+# model.add(Bidirectional(rnn_layer_cls(RNN_UNITS, return_sequences=True)))
+# model.add(BatchNormalization()) # แนะนำใส่คั่นเพื่อกันค่าเพี้ยน
+# model.add(Dropout(0.3))         # ใส่ Dropout เบาๆ ระหว่างชั้น
+# # --- ชั้นที่ 2 (เพิ่มใหม่) ---
+# # ยังต้อง return_sequences=True อยู่ เพราะต้องส่งต่อให้ Attention
+# model.add(Bidirectional(rnn_layer_cls(RNN_UNITS, return_sequences=True)))
 
 # 3. Attention
 # ★★★ จุดที่ 3: แทรก Attention เข้าไป ★★★
