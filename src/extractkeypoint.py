@@ -18,30 +18,44 @@ def mediapipe_process(image, model):
 
 def extract_keypoints(results):
     """
-    ‼️ (ปรับปรุงใหม่) สกัดจุดแบบ Relative Coordinates ‼️
-    โดยเทียบกับจุดกึ่งกลางไหล่ (Shoulder Center)
-    รวม 258 ค่าเท่าเดิม (แต่ค่า x, y จะเปลี่ยนไป)
+    ปรับปรุง: Relative Coordinates + Scale Normalization (แก้ปัญหายืนใกล้-ไกล)
     """
-    # 1. หาจุดอ้างอิง (Reference Point): กึ่งกลางไหล่ซ้าย(11)-ขวา(12)
-    ref_x, ref_y = 0.5, 0.5 # ค่า Default เผื่อไม่เจอตัว
+    # 1. หาจุดอ้างอิง (Reference Point) และ "ขนาดตัว" (Body Size)
+    ref_x, ref_y = 0.5, 0.5
+    body_size = 1.0 # ค่าหาร Default
     
     if results.pose_landmarks:
-        # Landmark 11 = ไหล่ซ้าย, 12 = ไหล่ขวา
         landmarks = results.pose_landmarks.landmark
+        # จุดอ้างอิง: กึ่งกลางไหล่
         ref_x = (landmarks[11].x + landmarks[12].x) / 2
         ref_y = (landmarks[11].y + landmarks[12].y) / 2
+        
+        # ⭐ คำนวณความกว้างไหล่ (ระยะห่างระหว่างไหล่ซ้าย-ขวา)
+        # ใช้สูตร Distance: sqrt((x2-x1)^2 + (y2-y1)^2)
+        dist_x = landmarks[11].x - landmarks[12].x
+        dist_y = landmarks[11].y - landmarks[12].y
+        body_size = np.sqrt(dist_x**2 + dist_y**2)
+        
+        # ป้องกันการหารด้วย 0 (เผื่อ MediaPipe เอ๋อ)
+        if body_size < 0.001: body_size = 1.0
 
-    # ฟังก์ชันย่อย: แปลงเป็น Relative (จุด - จุดอ้างอิง)
     def get_relative_coords(landmarks_obj, include_vis=False):
         if not landmarks_obj:
             return np.zeros(33*4) if include_vis else np.zeros(21*3)
         
         data = []
         for res in landmarks_obj.landmark:
-            # --- หัวใจสำคัญ: ลบจุดอ้างอิงออก ---
+            # --- 1. ลบจุดอ้างอิง (ย้ายจุดศูนย์กลาง) ---
             rel_x = res.x - ref_x
             rel_y = res.y - ref_y
-            # -------------------------------
+            
+            # --- ⭐ 2. หารด้วยขนาดตัว (ปรับสเกล) ---
+            # จะทำให้ค่า x, y อยู่ในช่วงใกล้เคียงกัน ไม่ว่าจะยืนใกล้หรือไกล
+            rel_x = rel_x / body_size
+            rel_y = rel_y / body_size
+            
+            # (Optional) ถ้าอยากให้ Z scale ด้วย ก็หารได้
+            # rel_z = res.z / body_size 
             
             if include_vis:
                 data.append([rel_x, rel_y, res.z, res.visibility])
@@ -50,12 +64,11 @@ def extract_keypoints(results):
         
         return np.array(data).flatten()
 
-    # 2. เรียกใช้กับทุกส่วน
+    # 2. เรียกใช้
     pose = get_relative_coords(results.pose_landmarks, include_vis=True)
     lh   = get_relative_coords(results.left_hand_landmarks, include_vis=False)
     rh   = get_relative_coords(results.right_hand_landmarks, include_vis=False)
     
-    # รวมทั้งหมด (Shape ต้องได้ 258 เท่าเดิม)
     return np.concatenate([pose, lh, rh])
 
 # --- 3. ตั้งค่าหลัก ---
@@ -65,12 +78,9 @@ PROCESSED_DATA_PATH = os.path.join('data', 'processed')
 
 # ⚠️ อย่าลืมแก้ชื่อท่าตรงนี้ให้ครบนะครับ
 actions = np.array([
-    'distention',
     'fever',
     'feverish',
     'no_action',
-    'wounded',
-    # ใส่ท่าอื่นๆ เพิ่มตรงนี้...
 ])
 
 sequence_length = 30

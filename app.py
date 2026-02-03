@@ -30,7 +30,7 @@ STABLE_FRAMES   = 10      # ผ่านเงื่อนไขซ้ำ ๆ �
 
 CAM_INDEX        = 0
 FRAME_W, FRAME_H = 640, 480
-MODEL_COMPLEXITY = 0     # Mediapipe Holistic: 0 เร็วสุด / 1 สมดุล / 2 แม่นกว่าแต่ช้ากว่า
+MODEL_COMPLEXITY = 1     # Mediapipe Holistic: 0 เร็วสุด / 1 สมดุล / 2 แม่นกว่าแต่ช้ากว่า
 
 # ========== Utils ==========
 def nonzero_frames_ratio(seq30x258: np.ndarray) -> float:

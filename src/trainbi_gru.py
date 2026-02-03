@@ -8,50 +8,65 @@ import math
 
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.callbacks import ModelCheckpoint, TensorBoard, EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras.callbacks import (
+    ModelCheckpoint,
+    TensorBoard,
+    EarlyStopping,
+    ReduceLROnPlateau,
+)
 from tensorflow.keras.layers import (
-    LSTM, Dense, Dropout, Conv1D, Bidirectional,
-    GRU, BatchNormalization, MaxPooling1D, Input, Layer
+    LSTM,
+    Dense,
+    Dropout,
+    Conv1D,
+    Bidirectional,
+    GRU,
+    BatchNormalization,
+    MaxPooling1D,
+    Input,
+    Layer,
 )
 from tensorflow.keras.optimizers import Adam
 import tensorflow.keras.backend as K
 
 # ---------------- 0) EXPERIMENT CONFIG ----------------
-EXPERIMENT_NAME = "exp_gru_attention_v4" # เปลี่ยนชื่อนิดนึงจะได้รู้ว่าเป็นเวอร์ชันใหม่
+EXPERIMENT_NAME = "exp_gru_attention_v4"  # เปลี่ยนชื่อนิดนึงจะได้รู้ว่าเป็นเวอร์ชันใหม่
 RNN_TYPE = "gru"
 CONV_FILTERS = 64
-RNN_UNITS    = 64
+RNN_UNITS = 64
 DENSE_UNITS1 = 64
 DENSE_UNITS2 = 32
-DROPOUT_RATE = 0.4
+DROPOUT_RATE = 0.6
 
 LEARNING_RATE = 1e-3
-NUM_EPOCHS    = 50        # เพิ่มรอบหน่อย เพราะมี LR Scheduler ช่วย
-BATCH_SIZE    = 32
+NUM_EPOCHS = 100  # เพิ่มรอบหน่อย เพราะมี LR Scheduler ช่วย
+BATCH_SIZE = 32
 
 EARLY_STOPPING_PATIENCE = 15  # รอได้นานขึ้นอีกนิด
 
 # class balancing
-USE_CLASS_WEIGHT      = True
+USE_CLASS_WEIGHT = True
 USE_BALANCED_SAMPLING = True
 
 
 # ---------------- 1) CONFIG พื้นฐาน ----------------
-DATA_DIR   = "data"
-TRAIN_DIR  = os.path.join(DATA_DIR, "processed_train")
-VAL_DIR    = os.path.join(DATA_DIR, "processed_val")
-TEST_DIR   = os.path.join(DATA_DIR, "processed_test")
+DATA_DIR = "data"
+TRAIN_DIR = os.path.join(DATA_DIR, "processed_train")
+VAL_DIR = os.path.join(DATA_DIR, "processed_val")
+TEST_DIR = os.path.join(DATA_DIR, "processed_test")
 
-actions = np.array([
-    # 'distention',
-    'fever',
-    'feverish',
-    'no_action',
-    # 'wounded'
-])
+actions = np.array(
+    [
+        # 'distention',
+        "fever",
+        "feverish",
+        "no_action",
+        # 'wounded'
+    ]
+)
 
 sequence_length = 30
-num_features    = 258
+num_features = 258
 
 SEED = 42
 np.random.seed(SEED)
@@ -85,113 +100,98 @@ def load_split(split_dir):
     print(f"  -> Loaded {X.shape[0]} sequences from {split_dir}")
     return X, y_one_hot
 
+
 print("Loading datasets (train / val / test)...")
 X_train, y_train = load_split(TRAIN_DIR)
-X_val,   y_val   = load_split(VAL_DIR)
-X_test,  y_test  = load_split(TEST_DIR)
+X_val, y_val = load_split(VAL_DIR)
+X_test, y_test = load_split(TEST_DIR)
 
 # คำนวณ Class Weights
-y_train_int  = np.argmax(y_train, axis=1)
+y_train_int = np.argmax(y_train, axis=1)
 class_counts = np.bincount(y_train_int, minlength=len(actions))
 class_weights = {}
 total = float(np.sum(class_counts))
 for i, cnt in enumerate(class_counts):
-    if cnt == 0: class_weights[i] = 0.0
-    else: class_weights[i] = total / (len(actions) * float(cnt))
+    if cnt == 0:
+        class_weights[i] = 0.0
+    else:
+        class_weights[i] = total / (len(actions) * float(cnt))
+# ---------------- 2.1) Data Generators (ตัวตักข้อมูล) ----------------
 
-
-# ---------------- 3) Data Augmentation (Online) ----------------
-# (ส่วน Augmentation คงเดิม)
-POSE_FLIP_PAIRS = np.array([(11, 12), (13, 14), (15, 16), (23, 24), (25, 26), (27, 28), (29, 30), (31, 32)])
-POSE_FLIP_INDICES = []
-POSE_DIM = 4
-for l_idx, r_idx in POSE_FLIP_PAIRS:
-    for i in range(POSE_DIM): POSE_FLIP_INDICES.append((l_idx * POSE_DIM + i, r_idx * POSE_DIM + i))
-
-POSE_SIZE = 33 * 4
-LH_START, LH_END = 132, 132 + 63
-RH_START, RH_END = 132 + 63, 132 + 63 + 63
-
-def add_noise(keypoints, noise_level=0.01):
-    return keypoints + np.random.normal(0, noise_level, keypoints.shape)
-
-def flip_keypoints(keypoints):
-    flipped_kps = np.copy(keypoints)
-    flipped_kps[0:POSE_SIZE:4] = 1.0 - flipped_kps[0:POSE_SIZE:4] # Flip pose x
-    flipped_kps[LH_START:RH_END:3] = 1.0 - flipped_kps[LH_START:RH_END:3] # Flip hand x
-    for l_idx, r_idx in POSE_FLIP_INDICES: # Swap L/R joints
-        flipped_kps[l_idx], flipped_kps[r_idx] = flipped_kps[r_idx], flipped_kps[l_idx]
-    # Swap Hand blocks
-    lh_block = np.copy(flipped_kps[LH_START:LH_END])
-    rh_block = np.copy(flipped_kps[RH_START:RH_END])
-    flipped_kps[LH_START:LH_END] = rh_block
-    flipped_kps[RH_START:RH_END] = lh_block
-    return flipped_kps
 
 def data_generator(X_data, y_data, batch_size=32, augment=False):
+    """
+    Generator แบบปกติ: สุ่มลำดับข้อมูลแล้วส่งไปทีละ Batch
+    (ตัดส่วน Augment ออกแล้ว เพื่อความคลีน)
+    """
     num_samples = X_data.shape[0]
     indices = np.arange(num_samples)
+
     while True:
         np.random.shuffle(indices)
         for start in range(0, num_samples, batch_size):
             end = min(start + batch_size, num_samples)
             batch_indices = indices[start:end]
+
             X_batch = X_data[batch_indices]
             y_batch = y_data[batch_indices]
-            if augment:
-                X_batch_aug = []
-                for seq in X_batch:
-                    aug_seq = np.copy(seq)
-                    if random.random() < 0.3:
-                        for i in range(seq.shape[0]): aug_seq[i] = flip_keypoints(aug_seq[i])
-                    if random.random() < 0.5:
-                        for i in range(seq.shape[0]): aug_seq[i] = add_noise(aug_seq[i], 0.005)
-                    X_batch_aug.append(aug_seq)
-                X_batch = np.array(X_batch_aug)
+
+            # ส่งข้อมูลดิบๆ เลย (เพราะเราทำ Offline Augment มาแล้ว)
             yield X_batch, y_batch
 
+
 def balanced_data_generator(X_data, y_data, batch_size=32, augment=False):
+    """
+    Generator แบบ Balanced: สุ่มหยิบทีละคลาสเท่าๆ กัน
+    เหมาะมากสำหรับข้อมูลที่ไม่สมดุล (Imbalanced Data)
+    """
     num_classes = y_data.shape[1]
     y_int = np.argmax(y_data, axis=1)
+
+    # แยก Index ของแต่ละคลาสเตรียมไว้
     class_indices = [np.where(y_int == c)[0] for c in range(num_classes)]
     classes = np.arange(num_classes)
+
     while True:
         X_batch_list, y_batch_list = [], []
+
+        # วนลูปหยิบของใส่ตะกร้าจนเต็ม Batch
         for _ in range(batch_size):
+            # 1. สุ่มเลือกคลาสมา 1 คลาส
             c = int(np.random.choice(classes))
-            if len(class_indices[c]) == 0: continue
+            if len(class_indices[c]) == 0:
+                continue
+
+            # 2. สุ่มหยิบตัวอย่างในคลาสนั้นมา 1 อัน
             idx = int(np.random.choice(class_indices[c]))
+
             X_batch_list.append(X_data[idx])
             y_batch_list.append(y_data[idx])
-        if not X_batch_list: continue
-        X_batch = np.array(X_batch_list)
-        y_batch = np.array(y_batch_list)
-        if augment:
-            X_batch_aug = []
-            for seq in X_batch:
-                aug_seq = np.copy(seq)
-                if random.random() < 0.3:
-                    for i in range(seq.shape[0]): aug_seq[i] = flip_keypoints(aug_seq[i])
-                if random.random() < 0.5:
-                    for i in range(seq.shape[0]): aug_seq[i] = add_noise(aug_seq[i], 0.005)
-                X_batch_aug.append(aug_seq)
-            X_batch = np.array(X_batch_aug)
-        yield X_batch, y_batch
 
+        if not X_batch_list:
+            continue
 
-# ---------------- 4) สร้าง Custom Attention Layer ----------------
+        yield np.array(X_batch_list), np.array(y_batch_list)
+
+# ---------------- 3) สร้าง Custom Attention Layer ----------------
 # ★★★ จุดที่ 1: เพิ่ม Attention Layer ตรงนี้ ★★★
 class Attention(Layer):
     def __init__(self, **kwargs):
         super(Attention, self).__init__(**kwargs)
 
     def build(self, input_shape):
-        self.W = self.add_weight(name='attention_weight', 
-                                 shape=(input_shape[-1], 1), 
-                                 initializer='normal', trainable=True)
-        self.b = self.add_weight(name='attention_bias', 
-                                 shape=(input_shape[1], 1), 
-                                 initializer='zeros', trainable=True)
+        self.W = self.add_weight(
+            name="attention_weight",
+            shape=(input_shape[-1], 1),
+            initializer="normal",
+            trainable=True,
+        )
+        self.b = self.add_weight(
+            name="attention_bias",
+            shape=(input_shape[1], 1),
+            initializer="zeros",
+            trainable=True,
+        )
         super(Attention, self).build(input_shape)
 
     def call(self, x):
@@ -205,14 +205,21 @@ class Attention(Layer):
         return K.sum(output, axis=1)
 
 
-# ---------------- 5) สร้างโมเดล (Sequential with Attention) ----------------
+# ---------------- 4) สร้างโมเดล (Sequential with Attention) ----------------
 print(f"\nBuilding Model: {RNN_TYPE} + Attention + Conv1D")
 
 model = Sequential()
 
 # 1. Conv1D
-model.add(Conv1D(filters=CONV_FILTERS, kernel_size=3, activation="relu", padding="same",
-                 input_shape=(sequence_length, num_features)))
+model.add(
+    Conv1D(
+        filters=CONV_FILTERS,
+        kernel_size=3,
+        activation="relu",
+        padding="same",
+        input_shape=(sequence_length, num_features),
+    )
+)
 model.add(BatchNormalization())
 model.add(MaxPooling1D(pool_size=2))
 
@@ -232,21 +239,19 @@ model.add(Dense(DENSE_UNITS2, activation="relu"))
 model.add(Dense(actions.shape[0], activation="softmax"))
 
 
-# ---------------- 6) คอมไพล์โมเดล ----------------
+# ---------------- 5) คอมไพล์โมเดล ----------------
 print("Compiling the model with Label Smoothing...")
 
 # ★★★ จุดที่ 4: ใช้ Label Smoothing แทน Focal Loss ★★★
 loss_fn = tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.1)
 
 model.compile(
-    optimizer=Adam(learning_rate=LEARNING_RATE),
-    loss=loss_fn,
-    metrics=["accuracy"]
+    optimizer=Adam(learning_rate=LEARNING_RATE), loss=loss_fn, metrics=["accuracy"]
 )
 model.summary()
 
 
-# ---------------- 7) Callbacks & Training ----------------
+# ---------------- 6) Callbacks & Training ----------------
 log_dir = os.path.join("logs", EXPERIMENT_NAME)
 MODEL_DIR = "models"
 os.makedirs(log_dir, exist_ok=True)
@@ -256,33 +261,49 @@ checkpoint_path = os.path.join(MODEL_DIR, "best_model.keras")
 
 # Callbacks
 tb_callback = TensorBoard(log_dir=log_dir)
-checkpoint_callback = ModelCheckpoint(checkpoint_path, monitor="val_accuracy", verbose=1, save_best_only=True, mode="max")
-early_stopping_callback = EarlyStopping(monitor="val_accuracy", patience=EARLY_STOPPING_PATIENCE, restore_best_weights=True, verbose=1)
+checkpoint_callback = ModelCheckpoint(
+    checkpoint_path, monitor="val_accuracy", verbose=1, save_best_only=True, mode="max"
+)
+early_stopping_callback = EarlyStopping(
+    monitor="val_accuracy",
+    patience=EARLY_STOPPING_PATIENCE,
+    restore_best_weights=True,
+    verbose=1,
+)
 
 # ★★★ จุดที่ 5: เพิ่ม ReduceLROnPlateau ★★★
 reduce_lr_callback = ReduceLROnPlateau(
-    monitor='val_loss', 
-    factor=0.5,        # ลด LR เหลือ 50%
-    patience=4,        # ถ้ารอ 4 epoch แล้ว loss ไม่ลด
-    min_lr=1e-6, 
-    verbose=1
+    monitor="val_loss",
+    factor=0.5,  # ลด LR เหลือ 50%
+    patience=4,  # ถ้ารอ 4 epoch แล้ว loss ไม่ลด
+    min_lr=1e-6,
+    verbose=1,
 )
 
-callbacks_list = [tb_callback, checkpoint_callback, early_stopping_callback, reduce_lr_callback]
+callbacks_list = [
+    tb_callback,
+    checkpoint_callback,
+    early_stopping_callback,
+    reduce_lr_callback,
+]
 
 print("\nStarting training...")
 
 if USE_BALANCED_SAMPLING:
     print("[INFO] Using BALANCED data generator for training.")
-    train_generator = balanced_data_generator(X_train, y_train, BATCH_SIZE, augment=True)
+    train_generator = balanced_data_generator(
+        X_train, y_train, BATCH_SIZE, augment=False
+    )
 else:
     print("[INFO] Using NORMAL data generator for training.")
-    train_generator = data_generator(X_train, y_train, BATCH_SIZE, augment=True)
+    train_generator = data_generator(X_train, y_train, BATCH_SIZE, augment=False)
 
 # ★★★ จุดที่ 6: Val Generator ต้องปิด Augmentation (augment=False) ★★★
 val_generator = data_generator(X_val, y_val, BATCH_SIZE, augment=False)
 
-class_weight_arg = class_weights if (USE_CLASS_WEIGHT and not USE_BALANCED_SAMPLING) else None
+class_weight_arg = (
+    class_weights if (USE_CLASS_WEIGHT and not USE_BALANCED_SAMPLING) else None
+)
 
 history = model.fit(
     train_generator,
@@ -291,10 +312,10 @@ history = model.fit(
     validation_data=val_generator,
     validation_steps=max(1, math.ceil(len(X_val) / BATCH_SIZE)),
     callbacks=callbacks_list,
-    class_weight=class_weight_arg
+    class_weight=class_weight_arg,
 )
 
-# ---------------- 8) บันทึกและประเมินผล ----------------
+# ---------------- 7) บันทึกและประเมินผล ----------------
 model.save(os.path.join(MODEL_DIR, "last_model.keras"))
 print(f"Models saved to {MODEL_DIR}")
 
@@ -317,11 +338,12 @@ for c, name in enumerate(actions):
     best_f1, best_th = -1, 0.5
     for th in np.linspace(0.3, 0.9, 61):
         y_pred_c = (probs[:, c] >= th).astype(int)
-        tp = np.sum((y_pred_c==1) & (y_true_c==1))
-        fp = np.sum((y_pred_c==1) & (y_true_c==0))
-        fn = np.sum((y_pred_c==0) & (y_true_c==1))
-        f1 = 0.0 if (tp+fp==0 or tp+fn==0) else (2*tp)/(2*tp+fp+fn)
-        if f1 > best_f1: best_f1, best_th = f1, th
+        tp = np.sum((y_pred_c == 1) & (y_true_c == 1))
+        fp = np.sum((y_pred_c == 1) & (y_true_c == 0))
+        fn = np.sum((y_pred_c == 0) & (y_true_c == 1))
+        f1 = 0.0 if (tp + fp == 0 or tp + fn == 0) else (2 * tp) / (2 * tp + fp + fn)
+        if f1 > best_f1:
+            best_f1, best_th = f1, th
     thresholds[name] = {"threshold": float(best_th), "f1": float(best_f1)}
     print(f"  {name}: Th={best_th:.2f}, F1={best_f1:.4f}")
 

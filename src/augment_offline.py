@@ -33,40 +33,40 @@ import random
 
 # ================== CONFIG ทั่วไป ==================
 
-ROOT_DIR  = "data"
+ROOT_DIR = "data"
 TRAIN_DIR = os.path.join(ROOT_DIR, "processed_train")
 
 RANDOM_SEED = 42
 
-SEQ_LEN   = 30
-FEAT_DIM  = 258
+SEQ_LEN = 30
+FEAT_DIM = 258
 
 # โครงสร้างฟีเจอร์ตาม extractkeypoint.py
-POSE_LM   = 33
-POSE_DIM  = 4
-HAND_LM   = 21
-HAND_DIM  = 3
+POSE_LM = 33
+POSE_DIM = 4
+HAND_LM = 21
+HAND_DIM = 3
 
-POSE_SIZE = POSE_LM * POSE_DIM               # 33*4 = 132
-LH_START  = POSE_SIZE                        # 132
-LH_SIZE   = HAND_LM * HAND_DIM               # 63
-RH_START  = LH_START + LH_SIZE               # 195
-RH_SIZE   = HAND_LM * HAND_DIM               # 63
+POSE_SIZE = POSE_LM * POSE_DIM  # 33*4 = 132
+LH_START = POSE_SIZE  # 132
+LH_SIZE = HAND_LM * HAND_DIM  # 63
+RH_START = LH_START + LH_SIZE  # 195
+RH_SIZE = HAND_LM * HAND_DIM  # 63
 FEATURE_TOTAL = POSE_SIZE + LH_SIZE + RH_SIZE
 
 assert FEATURE_TOTAL == FEAT_DIM, "FEAT_DIM ต้องเท่ากับ Pose(33*4)+LH(21*3)+RH(21*3)=258"
 
 # Config ของแต่ละเทคนิค
-NOISE_STD        = 0.02
+NOISE_STD = 0.02
 MAX_SHIFT_FRAMES = 2
-JOINT_DROP_PROB  = 0.05
-SCALE_RANGE      = (0.9, 1.1)
-TRANSLATE_STD    = 0.02
+JOINT_DROP_PROB = 0.05
+SCALE_RANGE = (0.9, 1.1)
+TRANSLATE_STD = 0.02
 
-TIME_WARP_RANGE    = (0.85, 1.15)
+TIME_WARP_RANGE = (0.85, 1.15)
 PARTIAL_KEEP_RANGE = (0.75, 0.95)
-PREFIX_MAX_FRAMES  = 3
-SUFFIX_MAX_FRAMES  = 3
+PREFIX_MAX_FRAMES = 3
+SUFFIX_MAX_FRAMES = 3
 
 NO_ACTION_CLASS_NAME = "no_action"
 
@@ -77,9 +77,9 @@ np.random.seed(RANDOM_SEED)
 # ----------------- index helper สำหรับ x,y,z,vis -----------------
 
 # Pose: 0..POSE_SIZE-1 เป็น (x,y,z,vis) interleave ทีละ 4
-POSE_X_IDX   = np.arange(0, POSE_SIZE, 4)
-POSE_Y_IDX   = np.arange(1, POSE_SIZE, 4)
-POSE_Z_IDX   = np.arange(2, POSE_SIZE, 4)
+POSE_X_IDX = np.arange(0, POSE_SIZE, 4)
+POSE_Y_IDX = np.arange(1, POSE_SIZE, 4)
+POSE_Z_IDX = np.arange(2, POSE_SIZE, 4)
 POSE_VIS_IDX = np.arange(3, POSE_SIZE, 4)
 
 # Left hand
@@ -93,11 +93,9 @@ RH_Y_IDX = RH_START + np.arange(1, RH_SIZE, 3)
 RH_Z_IDX = RH_START + np.arange(2, RH_SIZE, 3)
 
 # ใช้ pair ของ landmark index สำหรับสลับซ้าย-ขวา (ให้ match กับ trainbi_gru.py)
-POSE_FLIP_PAIRS = np.array([
-    (11, 12), (13, 14), (15, 16),
-    (23, 24), (25, 26), (27, 28),
-    (29, 30), (31, 32)
-])
+POSE_FLIP_PAIRS = np.array(
+    [(11, 12), (13, 14), (15, 16), (23, 24), (25, 26), (27, 28), (29, 30), (31, 32)]
+)
 POSE_FLIP_INDICES = []
 for l_idx, r_idx in POSE_FLIP_PAIRS:
     for d in range(POSE_DIM):  # x,y,z,vis
@@ -105,6 +103,7 @@ for l_idx, r_idx in POSE_FLIP_PAIRS:
 
 
 # ================== UTILITIES ==================
+
 
 def is_augmented_filename(fname: str) -> bool:
     """
@@ -127,10 +126,13 @@ def load_no_action_pool(train_dir: str, class_name: str = "no_action"):
         print(f"[INFO] ไม่พบโฟลเดอร์ no_action สำหรับ prefix/suffix: {na_dir}")
         return pool
 
-    files = sorted([
-        f for f in os.listdir(na_dir)
-        if f.endswith(".npy") and not is_augmented_filename(f)
-    ])
+    files = sorted(
+        [
+            f
+            for f in os.listdir(na_dir)
+            if f.endswith(".npy") and not is_augmented_filename(f)
+        ]
+    )
 
     for fname in files:
         path = os.path.join(na_dir, fname)
@@ -148,35 +150,32 @@ def load_no_action_pool(train_dir: str, class_name: str = "no_action"):
 
 
 # ================== ฟังก์ชัน augment ระดับเฟรมเดียว (1D = 258) ==================
-
 def flip_keypoints_frame(keypoints: np.ndarray) -> np.ndarray:
     """
-    flip skeleton ทั้งตัวในเฟรมเดียวแบบเดียวกับ online augmentation ใน trainbi_gru.py
-    - flip แกน x ของ pose, LH, RH (x -> 1-x)
-    - สลับ landmark ซ้ายขวาของ pose ตาม POSE_FLIP_PAIRS
-    - สลับ block มือซ้าย/ขวา
+    flip skeleton ทั้งตัวในเฟรมเดียว (ฉบับแก้ไขสำหรับ Relative Coordinates)
+    - flip แกน x: เปลี่ยนเครื่องหมาย (x -> -x)
+    - สลับ landmark ซ้าย/ขวา
     """
     flipped = np.copy(keypoints)
 
-    # 1) flip x pose
-    flipped[POSE_X_IDX] = 1.0 - flipped[POSE_X_IDX]
+    # 1) flip x pose (แก้ตรงนี้: ใช้ -x แทน 1.0-x)
+    flipped[POSE_X_IDX] = -flipped[POSE_X_IDX]
 
-    # 2) flip x มือ
-    flipped[LH_X_IDX] = 1.0 - flipped[LH_X_IDX]
-    flipped[RH_X_IDX] = 1.0 - flipped[RH_X_IDX]
+    # 2) flip x มือ (แก้ตรงนี้เหมือนกัน)
+    flipped[LH_X_IDX] = -flipped[LH_X_IDX]
+    flipped[RH_X_IDX] = -flipped[RH_X_IDX]
 
     # 3) swap pose left/right landmarks ทั้ง 4 ค่า (x,y,z,vis)
     for l_flat, r_flat in POSE_FLIP_INDICES:
         flipped[l_flat], flipped[r_flat] = flipped[r_flat], flipped[l_flat]
 
     # 4) swap LH/RH block ทั้งก้อน
-    lh_block = np.copy(flipped[LH_START:LH_START + LH_SIZE])
-    rh_block = np.copy(flipped[RH_START:RH_START + RH_SIZE])
-    flipped[LH_START:LH_START + LH_SIZE] = rh_block
-    flipped[RH_START:RH_START + RH_SIZE] = lh_block
+    lh_block = np.copy(flipped[LH_START : LH_START + LH_SIZE])
+    rh_block = np.copy(flipped[RH_START : RH_START + RH_SIZE])
+    flipped[LH_START : LH_START + LH_SIZE] = rh_block
+    flipped[RH_START : RH_START + RH_SIZE] = lh_block
 
     return flipped
-
 
 def add_gaussian_noise_frame(keypoints: np.ndarray, std: float = 0.02) -> np.ndarray:
     """
@@ -187,6 +186,7 @@ def add_gaussian_noise_frame(keypoints: np.ndarray, std: float = 0.02) -> np.nda
 
 
 # ================== ฟังก์ชัน augment ระดับ sequence (T, 258) ==================
+
 
 def horizontal_flip_sequence(seq: np.ndarray) -> np.ndarray:
     """
@@ -244,26 +244,26 @@ def joint_dropout(seq: np.ndarray, drop_prob: float = JOINT_DROP_PROB) -> np.nda
     for j in range(POSE_LM):
         if random.random() < drop_prob:
             base = j * POSE_DIM
-            dropped[:, base:base + POSE_DIM] = 0.0
+            dropped[:, base : base + POSE_DIM] = 0.0
 
     # Left hand joints
     for j in range(HAND_LM):
         if random.random() < drop_prob:
             base = LH_START + j * HAND_DIM
-            dropped[:, base:base + HAND_DIM] = 0.0
+            dropped[:, base : base + HAND_DIM] = 0.0
 
     # Right hand joints
     for j in range(HAND_LM):
         if random.random() < drop_prob:
             base = RH_START + j * HAND_DIM
-            dropped[:, base:base + HAND_DIM] = 0.0
+            dropped[:, base : base + HAND_DIM] = 0.0
 
     return dropped
 
 
-def scale_translate(seq: np.ndarray,
-                    scale_range=SCALE_RANGE,
-                    translate_std=TRANSLATE_STD) -> np.ndarray:
+def scale_translate(
+    seq: np.ndarray, scale_range=SCALE_RANGE, translate_std=TRANSLATE_STD
+) -> np.ndarray:
     """
     (Version: Relative Coordinates)
     ขยาย/ย่อ + เลื่อนตำแหน่ง
@@ -278,7 +278,7 @@ def scale_translate(seq: np.ndarray,
     scale = np.random.uniform(scale_range[0], scale_range[1])
     tx = np.random.normal(loc=0.0, scale=translate_std)
     ty = np.random.normal(loc=0.0, scale=translate_std)
-    
+
     # จุดหมุนคือ (0,0) เพราะเป็นพิกัดเทียบไหล่
     cx, cy = 0.0, 0.0
 
@@ -287,7 +287,7 @@ def scale_translate(seq: np.ndarray,
         st[t, y_idx] = (st[t, y_idx] - cy) * scale + cy + ty
 
     # ไม่ต้อง Clip ค่า (เพราะ Relative Coordinate ติดลบได้)
-    
+
     return st
 
 
@@ -323,16 +323,18 @@ def partial_sequence(seq: np.ndarray, keep_range=PARTIAL_KEEP_RANGE) -> np.ndarr
         return seq.copy()
 
     start = np.random.randint(0, T - keep_len + 1)
-    sub = seq[start:start + keep_len]
+    sub = seq[start : start + keep_len]
 
     indices = np.linspace(0, keep_len - 1, num=T).astype(int)
     return sub[indices]
 
 
-def prefix_suffix_no_action(seq: np.ndarray,
-                            no_action_pool,
-                            max_prefix_frames: int = PREFIX_MAX_FRAMES,
-                            max_suffix_frames: int = SUFFIX_MAX_FRAMES) -> np.ndarray:
+def prefix_suffix_no_action(
+    seq: np.ndarray,
+    no_action_pool,
+    max_prefix_frames: int = PREFIX_MAX_FRAMES,
+    max_suffix_frames: int = SUFFIX_MAX_FRAMES,
+) -> np.ndarray:
     """
     เอาเฟรมจาก no_action มาต่อหน้า/หลังท่า แล้ว resample กลับเป็น SEQ_LEN
     ใช้เฉพาะตอน action ไม่ใช่ no_action เอง
@@ -363,6 +365,7 @@ def prefix_suffix_no_action(seq: np.ndarray,
 
 
 # ================== MAIN AUGMENT FOR ONE FILE ==================
+
 
 def augment_file(action_dir: str, fname: str, no_action_pool, is_no_action_class: bool):
     """
@@ -430,14 +433,16 @@ def augment_file(action_dir: str, fname: str, no_action_pool, is_no_action_class
 
     # 8) Prefix/Suffix no_action (ไม่ทำถ้าเป็นคลาส no_action เอง)
     if (not is_no_action_class) and no_action_pool:
-        psna_seq = prefix_suffix_no_action(seq, no_action_pool,
-                                           PREFIX_MAX_FRAMES, SUFFIX_MAX_FRAMES)
+        psna_seq = prefix_suffix_no_action(
+            seq, no_action_pool, PREFIX_MAX_FRAMES, SUFFIX_MAX_FRAMES
+        )
         psna_name = f"{base_name}_psna.npy"
         np.save(os.path.join(action_dir, psna_name), psna_seq)
         print(f"    -> saved {psna_name}")
 
 
 # ================== MAIN ==================
+
 
 def main():
     if not os.path.isdir(TRAIN_DIR):
@@ -450,8 +455,7 @@ def main():
 
     # หา action folders ทั้งหมดใน processed_train
     actions = [
-        d for d in os.listdir(TRAIN_DIR)
-        if os.path.isdir(os.path.join(TRAIN_DIR, d))
+        d for d in os.listdir(TRAIN_DIR) if os.path.isdir(os.path.join(TRAIN_DIR, d))
     ]
 
     print("พบ action ทั้งหมด:", actions)
@@ -460,10 +464,13 @@ def main():
         action_dir = os.path.join(TRAIN_DIR, action)
         print(f"\n=== Action: {action} ===")
 
-        files = sorted([
-            f for f in os.listdir(action_dir)
-            if f.endswith(".npy") and not is_augmented_filename(f)
-        ])
+        files = sorted(
+            [
+                f
+                for f in os.listdir(action_dir)
+                if f.endswith(".npy") and not is_augmented_filename(f)
+            ]
+        )
 
         if not files:
             print("  (ไม่มีไฟล์ใหม่ให้ augment หรือไฟล์ทั้งหมดถูก augment แล้ว)")
@@ -471,7 +478,7 @@ def main():
 
         print(f"  จำนวนไฟล์ต้นฉบับ: {len(files)}")
 
-        is_no_action_class = (action == NO_ACTION_CLASS_NAME)
+        is_no_action_class = action == NO_ACTION_CLASS_NAME
 
         for fname in files:
             augment_file(action_dir, fname, no_action_pool, is_no_action_class)
