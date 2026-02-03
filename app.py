@@ -26,10 +26,10 @@ ALPHA_EMA       = 0.20   # EMA smoothing (ต่ำ=นิ่ง)
 DEFAULT_THRESH  = 0.70   # เกณฑ์ความมั่นใจขั้นต่ำต่อคลาส
 TOP2_MARGIN     = 0.20   # อันดับ 1 ต้องทิ้งห่างอันดับ 2
 MIN_COVERAGE    = 0.50   # อย่างน้อยกี่เฟรมจาก 30 ที่มีแลนด์มาร์ก (>0 คือมีข้อมูลจริง)
-STABLE_FRAMES   = 10      # ผ่านเงื่อนไขซ้ำ ๆ กี่ครั้งจึงจะยืนยันผล (กันกระพริบ)
+STABLE_FRAMES   = 5      # ผ่านเงื่อนไขซ้ำ ๆ กี่ครั้งจึงจะยืนยันผล (กันกระพริบ)
 
 CAM_INDEX        = 0
-FRAME_W, FRAME_H = 640, 480
+FRAME_W, FRAME_H = 640, 480 #  640, 480  HD (1280 720) ความละเอียนดของกล้อง
 MODEL_COMPLEXITY = 1     # Mediapipe Holistic: 0 เร็วสุด / 1 สมดุล / 2 แม่นกว่าแต่ช้ากว่า
 
 # ========== Utils ==========
@@ -40,21 +40,28 @@ def nonzero_frames_ratio(seq30x258: np.ndarray) -> float:
     return float(np.any(seq30x258 != 0.0, axis=1).sum()) / float(SEQ_LEN)
 
 # ดึง 258 ฟีเจอร์จากผลลัพธ์ Mediapipe
-# แก้ไขฟังก์ชันนี้ให้เป็น Relative Coordinates
+
 def extract_258(res) -> np.ndarray:
     """
-    สกัดฟีเจอร์ 258 ค่า (Relative Coordinates เทียบกับไหล่):
-    Pose: 33 * (x,y,z,visibility) = 132
-    LH:   21 * (x,y,z) = 63
-    RH:   21 * (x,y,z) = 63
+    สกัดฟีเจอร์ 258 ค่า (Relative Coordinates + Scale Normalization)
     """
-    # 1. หาจุดอ้างอิง (Reference Point): กึ่งกลางไหล่ซ้าย(11)-ขวา(12)
-    ref_x, ref_y = 0.5, 0.5 # Default เผื่อไม่เจอตัว
+    # 1. หาจุดอ้างอิง (Reference Point) และขนาดตัว (Body Size)
+    ref_x, ref_y = 0.5, 0.5 
+    body_size = 1.0  # <--- เพิ่มตัวแปรนี้
     
     if res.pose_landmarks:
         landmarks = res.pose_landmarks.landmark
         ref_x = (landmarks[11].x + landmarks[12].x) / 2
         ref_y = (landmarks[11].y + landmarks[12].y) / 2
+
+        # <--- เพิ่มส่วนคำนวณขนาดตัว (สำคัญมาก!) --->
+        dist_x = landmarks[11].x - landmarks[12].x
+        dist_y = landmarks[11].y - landmarks[12].y
+        body_size = np.sqrt(dist_x**2 + dist_y**2)
+        
+        # ป้องกันหารด้วย 0
+        if body_size < 0.001: body_size = 1.0
+        # <-------------------------------------->
 
     # ฟังก์ชันย่อย: แปลงและ Flatten
     def get_relative_flat(landmarks_obj, include_vis=False):
@@ -63,10 +70,14 @@ def extract_258(res) -> np.ndarray:
         
         data = []
         for lm in landmarks_obj.landmark:
-            # --- หัวใจสำคัญ: ลบจุดอ้างอิงออก ---
+            # 1. ลบจุดอ้างอิง
             rel_x = lm.x - ref_x
             rel_y = lm.y - ref_y
-            # -------------------------------
+            
+            # <--- 2. หารด้วยขนาดตัว (เพิ่มตรงนี้) --->
+            rel_x = rel_x / body_size
+            rel_y = rel_y / body_size
+            # <--------------------------------->
             
             if include_vis:
                 data.append([rel_x, rel_y, lm.z, lm.visibility])
