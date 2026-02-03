@@ -8,15 +8,46 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
+from tensorflow.keras.layers import Layer
+import tensorflow.keras.backend as K
+
+# ----------------- 1. ใส่ Class Attention ให้เหมือนไฟล์เทรนเป๊ะๆ -----------------
+class Attention(Layer):
+    def __init__(self, **kwargs):
+        super(Attention, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        self.W = self.add_weight(name='attention_weight', 
+                                 shape=(input_shape[-1], 1), 
+                                 initializer='normal', trainable=True)
+        self.b = self.add_weight(name='attention_bias', 
+                                 shape=(input_shape[1], 1), 
+                                 initializer='zeros', trainable=True)
+        super(Attention, self).build(input_shape)
+
+    def call(self, x):
+        e = K.tanh(K.dot(x, self.W) + self.b)
+        a = K.softmax(e, axis=1)
+        output = x * a
+        return K.sum(output, axis=1)
+
+    def get_config(self):
+        config = super(Attention, self).get_config()
+        return config
 
 # ----------------- CLI -----------------
 parser = argparse.ArgumentParser(description="Evaluate best_model.keras and export confusion matrix & metrics.")
 parser.add_argument("--model-dir", default="models", help="Directory containing best_model.keras / label_map.json")
-parser.add_argument("--data-dir",  default=os.path.join("data","processed"), help="Processed .npy root dir")
-parser.add_argument("--subset",    choices=["test","all"], default="test", help="Evaluate on test split or all data")
+
+# แก้ไข Default ให้ชี้ไปที่ processed_test โดยตรง
+parser.add_argument("--data-dir",  default=os.path.join("data","processed_test"), help="Processed .npy root dir")
+
+# แก้ไข Default ให้ใช้ข้อมูลทั้งหมด (all) เพราะใน folder test คือ test ล้วนๆ แล้ว
+parser.add_argument("--subset",    choices=["test","all"], default="all", help="Evaluate on test split or all data")
+
 parser.add_argument("--test-size", type=float, default=0.2, help="Test size for split when subset=test")
 parser.add_argument("--seed",      type=int, default=42, help="Random seed")
-parser.add_argument("--batch",     type=int, default=64, help="Prediction batch size")
+parser.add_argument("--batch",     type=int, default=32, help="Prediction batch size")
 parser.add_argument("--out",       default="reports", help="Output directory for reports")
 args = parser.parse_args()
 
@@ -50,6 +81,8 @@ print(f"[INFO] Classes ({num_classes}):", labels)
 
 # ----------------- Load dataset -----------------
 X, y = [], []
+print(f"[INFO] Loading data from: {args.data_dir}")
+
 for ci, cname in enumerate(labels):
     cdir = os.path.join(args.data_dir, cname)
     if not os.path.isdir(cdir):
@@ -57,33 +90,46 @@ for ci, cname in enumerate(labels):
         continue
     files = [f for f in os.listdir(cdir) if f.endswith(".npy")]
     files.sort()
+    count = 0
     for f in files:
         arr = np.load(os.path.join(cdir, f))
         if arr.shape != (SEQ_LEN, NUM_FEAT):
-            print(f"[SKIP] {cname}/{f} shape={arr.shape}")
+            # print(f"[SKIP] {cname}/{f} shape={arr.shape}")
             continue
         X.append(arr.astype(np.float32))
         y.append(ci)
+        count += 1
+    print(f"  - {cname}: {count} samples")
 
 X = np.asarray(X, dtype=np.float32)
 y = np.asarray(y, dtype=np.int32)
-print(f"[INFO] Loaded dataset: X={X.shape}, y={y.shape}")
+print(f"[INFO] Total dataset: X={X.shape}, y={y.shape}")
+
+if len(X) == 0:
+    print("[ERROR] No data found! Please check data path.")
+    exit()
 
 # ----------------- Split -----------------
 if args.subset == "test":
     X_train, X_eval, y_train, y_eval = train_test_split(
         X, y, test_size=args.test_size, random_state=args.seed, stratify=y
     )
-    print(f"[INFO] Using TEST split: {X_eval.shape[0]} samples")
+    print(f"[INFO] Using SPLIT (subset=test): {X_eval.shape[0]} samples for eval")
 else:
     X_eval, y_eval = X, y
-    print(f"[INFO] Using ALL data: {X_eval.shape[0]} samples")
+    print(f"[INFO] Using ALL loaded data (subset=all): {X_eval.shape[0]} samples")
 
 # ----------------- Load model -----------------
 print("[INFO] Loading model:", MODEL_PATH)
-model = tf.keras.models.load_model(MODEL_PATH)
+
+# 2. ส่ง custom_objects เข้าไปเพื่อให้รู้จัก Attention
+model = tf.keras.models.load_model(
+    MODEL_PATH, 
+    custom_objects={'Attention': Attention}
+)
 
 # ----------------- Predict -----------------
+print("Predicting...")
 probs = model.predict(X_eval, batch_size=args.batch, verbose=1)  # [N, C]
 y_pred = np.argmax(probs, axis=1)
 
@@ -142,8 +188,6 @@ plot_cm(cm_norm, "Confusion Matrix (Row-normalized)", "confusion_norm.png", norm
 
 # ----------------- Summary -----------------
 overall_acc = (y_pred == y_eval).mean()
-worst_idx = int(np.argmin(per_class_df["f1"]))
-best_idx  = int(np.argmax(per_class_df["f1"]))
 summary = [
     f"Samples eval: {X_eval.shape[0]}",
     f"Overall accuracy: {overall_acc:.4f}",
@@ -164,7 +208,3 @@ with open(os.path.join(args.out, "summary.txt"), "w", encoding="utf-8") as f:
 
 print("\n".join(summary))
 print(f"\n[OK] Saved reports to: {os.path.abspath(args.out)}")
-print(" - confusion_counts.png / confusion_norm.png (ภาพ)")
-print(" - confusion_counts.csv / confusion_norm.csv (ตาราง)")
-print(" - classification_report.csv / per_class_table.csv")
-print(" - summary.txt")
