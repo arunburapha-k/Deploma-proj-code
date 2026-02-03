@@ -40,45 +40,47 @@ def nonzero_frames_ratio(seq30x258: np.ndarray) -> float:
     return float(np.any(seq30x258 != 0.0, axis=1).sum()) / float(SEQ_LEN)
 
 # ดึง 258 ฟีเจอร์จากผลลัพธ์ Mediapipe
+# แก้ไขฟังก์ชันนี้ให้เป็น Relative Coordinates
 def extract_258(res) -> np.ndarray:
     """
-    สกัดฟีเจอร์ 258 ค่า:
+    สกัดฟีเจอร์ 258 ค่า (Relative Coordinates เทียบกับไหล่):
     Pose: 33 * (x,y,z,visibility) = 132
     LH:   21 * (x,y,z) = 63
     RH:   21 * (x,y,z) = 63
-    layout เหมือนตอนเทรนใน extractkeypoint.py
     """
-    # Pose 33*(x,y,z,visibility) = 132
+    # 1. หาจุดอ้างอิง (Reference Point): กึ่งกลางไหล่ซ้าย(11)-ขวา(12)
+    ref_x, ref_y = 0.5, 0.5 # Default เผื่อไม่เจอตัว
+    
     if res.pose_landmarks:
-        pose = np.array(
-            [[lm.x, lm.y, lm.z, lm.visibility]
-             for lm in res.pose_landmarks.landmark],
-            dtype=np.float32
-        ).ravel()
-    else:
-        pose = np.zeros(33 * 4, dtype=np.float32)
+        landmarks = res.pose_landmarks.landmark
+        ref_x = (landmarks[11].x + landmarks[12].x) / 2
+        ref_y = (landmarks[11].y + landmarks[12].y) / 2
 
-    # Left hand 21*(x,y,z) = 63
-    if res.left_hand_landmarks:
-        lh = np.array(
-            [[lm.x, lm.y, lm.z]
-             for lm in res.left_hand_landmarks.landmark],
-            dtype=np.float32
-        ).ravel()
-    else:
-        lh = np.zeros(21 * 3, dtype=np.float32)
+    # ฟังก์ชันย่อย: แปลงและ Flatten
+    def get_relative_flat(landmarks_obj, include_vis=False):
+        if not landmarks_obj:
+            return np.zeros(33*4) if include_vis else np.zeros(21*3)
+        
+        data = []
+        for lm in landmarks_obj.landmark:
+            # --- หัวใจสำคัญ: ลบจุดอ้างอิงออก ---
+            rel_x = lm.x - ref_x
+            rel_y = lm.y - ref_y
+            # -------------------------------
+            
+            if include_vis:
+                data.append([rel_x, rel_y, lm.z, lm.visibility])
+            else:
+                data.append([rel_x, rel_y, lm.z])
+        
+        return np.array(data, dtype=np.float32).flatten()
 
-    # Right hand 21*(x,y,z) = 63
-    if res.right_hand_landmarks:
-        rh = np.array(
-            [[lm.x, lm.y, lm.z]
-             for lm in res.right_hand_landmarks.landmark],
-            dtype=np.float32
-        ).ravel()
-    else:
-        rh = np.zeros(21 * 3, dtype=np.float32)
+    # 2. เรียกใช้
+    pose = get_relative_flat(res.pose_landmarks, include_vis=True)
+    lh   = get_relative_flat(res.left_hand_landmarks, include_vis=False)
+    rh   = get_relative_flat(res.right_hand_landmarks, include_vis=False)
 
-    return np.concatenate([pose, lh, rh]).astype(np.float32)  # (258,)
+    return np.concatenate([pose, lh, rh])
 
 def draw_header(image, label_text, conf):
     H, W = image.shape[:2]
