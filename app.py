@@ -26,10 +26,10 @@ ALPHA_EMA       = 0.20   # EMA smoothing (ต่ำ=นิ่ง)
 DEFAULT_THRESH  = 0.70   # เกณฑ์ความมั่นใจขั้นต่ำต่อคลาส
 TOP2_MARGIN     = 0.20   # อันดับ 1 ต้องทิ้งห่างอันดับ 2
 MIN_COVERAGE    = 0.50   # อย่างน้อยกี่เฟรมจาก 30 ที่มีแลนด์มาร์ก (>0 คือมีข้อมูลจริง)
-STABLE_FRAMES   = 5      # ผ่านเงื่อนไขซ้ำ ๆ กี่ครั้งจึงจะยืนยันผล (กันกระพริบ)
+STABLE_FRAMES   = 10      # ผ่านเงื่อนไขซ้ำ ๆ กี่ครั้งจึงจะยืนยันผล (กันกระพริบ)
 
 CAM_INDEX        = 0
-FRAME_W, FRAME_H = 640, 480 #  640, 480  HD (1280 720) ความละเอียนดของกล้อง
+FRAME_W, FRAME_H = 1280, 720 #  640, 480  HD (1280 720) ความละเอียนดของกล้อง
 MODEL_COMPLEXITY = 1     # Mediapipe Holistic: 0 เร็วสุด / 1 สมดุล / 2 แม่นกว่าแต่ช้ากว่า
 
 # ========== Utils ==========
@@ -79,10 +79,13 @@ def extract_258(res) -> np.ndarray:
             rel_y = rel_y / body_size
             # <--------------------------------->
             
+            # ★★★ แก้ตรงนี้ครับ: สร้าง rel_z ที่หารด้วย body_size ★★★
+            rel_z = lm.z / body_size
+            
             if include_vis:
-                data.append([rel_x, rel_y, lm.z, lm.visibility])
+                data.append([rel_x, rel_y, rel_z, lm.visibility])
             else:
-                data.append([rel_x, rel_y, lm.z])
+                data.append([rel_x, rel_y, rel_z])
         
         return np.array(data, dtype=np.float32).flatten()
 
