@@ -30,15 +30,15 @@ from tensorflow.keras.optimizers import Adam
 import tensorflow.keras.backend as K
 
 # ---------------- 0) EXPERIMENT CONFIG ----------------
-EXPERIMENT_NAME = "exp_gru_attention_v3_preme_back"  # เปลี่ยนชื่อนิดนึงจะได้รู้ว่าเป็นเวอร์ชันใหม่
+EXPERIMENT_NAME = "exp_gru"  # เปลี่ยนชื่อนิดนึงจะได้รู้ว่าเป็นเวอร์ชันใหม่
 RNN_TYPE = "gru"
 CONV_FILTERS = 64      # เดิม 64 / 128
 RNN_UNITS    = 64      # เดิม 64 / 128
 DENSE_UNITS1 = 64      # เดิม 64 / 128
 DENSE_UNITS2 = 32       # เดิม 32 / 64
 
-# ต้องเพิ่ม Dropout เพื่อคุมความเข้มข้นการเทรน
-DROPOUT_RATE = 0.3
+# ต้องเพิ่ม Dropout เพื่อคุมความเข้มข้นการเทรน  
+DROPOUT_RATE = 0.5
 
 LEARNING_RATE = 1e-3
 NUM_EPOCHS = 50  # เพิ่มรอบหน่อย เพราะมี LR Scheduler ช่วย
@@ -59,9 +59,9 @@ TEST_DIR = os.path.join(DATA_DIR, "processed_test")
 
 actions = np.array(
     [
-        "fever",
-        "feverish",
-        "no_action",
+    'fever',
+    'feverish',
+    'no_action',
     ]
 )
 
@@ -214,7 +214,7 @@ model = Sequential()
 model.add(
     Conv1D(
         filters=CONV_FILTERS,
-        kernel_size=3,
+        kernel_size=5, # <-- ลองแก้ตรงนี้จาก 3 เป็น 5 หรือ 7
         activation="relu",
         padding="same",
         input_shape=(sequence_length, num_features),
@@ -224,17 +224,16 @@ model.add(BatchNormalization())
 model.add(MaxPooling1D(pool_size=2))
 
 # # 2. RNN (Bi-GRU/LSTM)
-# # ★★★ จุดที่ 2: ต้องเปิด return_sequences=True เพื่อส่งต่อให้ Attention ★★★
 rnn_layer_cls = GRU if RNN_TYPE.lower() == "gru" else LSTM
+# # ★★★ จุดที่ 2: ต้องเปิด return_sequences=True เพื่อส่งต่อให้ Attention ★★★
 model.add(Bidirectional(rnn_layer_cls(RNN_UNITS, return_sequences=True)))
 
 # # 2. RNN (Stacked Bi-GRU/LSTM) - อัปเกรดเป็น 2 ชั้น
-# rnn_layer_cls = GRU if RNN_TYPE.lower() == "gru" else LSTM
 # # --- ชั้นที่ 1 ---
 # # return_sequences=True เพื่อส่งต่อให้ชั้นถัดไป
 # model.add(Bidirectional(rnn_layer_cls(RNN_UNITS, return_sequences=True)))
 # model.add(BatchNormalization()) # แนะนำใส่คั่นเพื่อกันค่าเพี้ยน
-# model.add(Dropout(0.3))         # ใส่ Dropout เบาๆ ระหว่างชั้น
+# model.add(Dropout(0.2))         # ใส่ Dropout เบาๆ ระหว่างชั้น
 # # --- ชั้นที่ 2 (เพิ่มใหม่) ---
 # # ยังต้อง return_sequences=True อยู่ เพราะต้องส่งต่อให้ Attention
 # model.add(Bidirectional(rnn_layer_cls(RNN_UNITS, return_sequences=True)))
@@ -254,7 +253,8 @@ model.add(Dense(actions.shape[0], activation="softmax"))
 print("Compiling the model with Label Smoothing...")
 
 # ★★★ จุดที่ 4: ใช้ Label Smoothing แทน Focal Loss ★★★
-loss_fn = tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.1)
+# แก้เป็น 0.0 เพื่อปลดล็อกความมั่นใจเต็มพิกัด
+loss_fn = tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.0)
 
 model.compile(
     optimizer=Adam(learning_rate=LEARNING_RATE), loss=loss_fn, metrics=["accuracy"]
