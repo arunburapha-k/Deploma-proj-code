@@ -49,18 +49,18 @@ def extract_keypoints(results):
             rel_x = res.x - ref_x
             rel_y = res.y - ref_y
             
-            # --- ⭐ 2. หารด้วยขนาดตัว (ปรับสเกล) ---
+            # --- 2. หารด้วยขนาดตัว (ปรับสเกล) ---
             # จะทำให้ค่า x, y อยู่ในช่วงใกล้เคียงกัน ไม่ว่าจะยืนใกล้หรือไกล
             rel_x = rel_x / body_size
             rel_y = rel_y / body_size
             
             # (Optional) ถ้าอยากให้ Z scale ด้วย ก็หารได้
-            # rel_z = res.z / body_size 
+            rel_z = res.z / body_size 
             
             if include_vis:
-                data.append([rel_x, rel_y, res.z, res.visibility])
+                data.append([rel_x, rel_y, rel_z, res.visibility])
             else:
-                data.append([rel_x, rel_y, res.z])
+                data.append([rel_x, rel_y, rel_z])
         
         return np.array(data).flatten()
 
