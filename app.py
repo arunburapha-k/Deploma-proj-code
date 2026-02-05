@@ -46,13 +46,14 @@ def extract_258(res) -> np.ndarray:
     สกัดฟีเจอร์ 258 ค่า (Relative Coordinates + Scale Normalization)
     """
     # 1. หาจุดอ้างอิง (Reference Point) และขนาดตัว (Body Size)
-    ref_x, ref_y = 0.5, 0.5 
+    ref_x, ref_y ,ref_z = 0.5, 0.5 ,0.0
     body_size = 1.0  # <--- เพิ่มตัวแปรนี้
     
     if res.pose_landmarks:
         landmarks = res.pose_landmarks.landmark
         ref_x = (landmarks[11].x + landmarks[12].x) / 2
         ref_y = (landmarks[11].y + landmarks[12].y) / 2
+        ref_z = (landmarks[11].z + landmarks[12].z) / 2
 
         # <--- เพิ่มส่วนคำนวณขนาดตัว (สำคัญมาก!) --->
         dist_x = landmarks[11].x - landmarks[12].x
@@ -80,7 +81,7 @@ def extract_258(res) -> np.ndarray:
             # <--------------------------------->
             
             # ★★★ แก้ตรงนี้ครับ: สร้าง rel_z ที่หารด้วย body_size ★★★
-            rel_z = lm.z / body_size
+            rel_z = (lm.z - ref_z) / body_size
             
             if include_vis:
                 data.append([rel_x, rel_y, rel_z, lm.visibility])

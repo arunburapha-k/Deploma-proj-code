@@ -21,7 +21,7 @@ def extract_keypoints(results):
     ปรับปรุง: Relative Coordinates + Scale Normalization (แก้ปัญหายืนใกล้-ไกล)
     """
     # 1. หาจุดอ้างอิง (Reference Point) และ "ขนาดตัว" (Body Size)
-    ref_x, ref_y = 0.5, 0.5
+    ref_x, ref_y ,ref_z = 0.5, 0.5,0.0
     body_size = 1.0 # ค่าหาร Default
     
     if results.pose_landmarks:
@@ -29,6 +29,7 @@ def extract_keypoints(results):
         # จุดอ้างอิง: กึ่งกลางไหล่
         ref_x = (landmarks[11].x + landmarks[12].x) / 2
         ref_y = (landmarks[11].y + landmarks[12].y) / 2
+        ref_z = (landmarks[11].z + landmarks[12].z) / 2
         
         # ⭐ คำนวณความกว้างไหล่ (ระยะห่างระหว่างไหล่ซ้าย-ขวา)
         # ใช้สูตร Distance: sqrt((x2-x1)^2 + (y2-y1)^2)
@@ -55,7 +56,7 @@ def extract_keypoints(results):
             rel_y = rel_y / body_size
             
             # (Optional) ถ้าอยากให้ Z scale ด้วย ก็หารได้
-            rel_z = res.z / body_size 
+            rel_z = (res.z - ref_z) / body_size 
             
             if include_vis:
                 data.append([rel_x, rel_y, rel_z, res.visibility])
