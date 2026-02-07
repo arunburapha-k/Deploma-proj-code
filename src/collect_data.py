@@ -29,8 +29,8 @@ if not cap.isOpened():
     exit()
 
 # ตั้งค่าความละเอียด (Optional: ปรับให้ตรงกับที่จะใช้จริง)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-# cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
 print("--- Starting Data Collection ---")
 print("Press 'q' to quit early.")

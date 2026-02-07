@@ -1,6 +1,17 @@
-opencv-python
-mediapipe
-tensorflow
-scikit-learn
-pandas
-tqdm
+# --- Core Deep Learning ---
+tensorflow==2.15.0
+# 🔥 ตัวช่วยสำคัญ: ทำให้รันโค้ด Keras 2 บน TF 2.17 ได้
+# tf-keras~=2.17.0
+keras-tuner>=1.4.7
+
+# --- Computer Vision ---
+mediapipe==0.10.14
+opencv-python>=4.9.0.80
+
+# --- Data Processing ---
+# ยังคงแนะนำ <2.0.0 เพื่อความเสถียรสูงสุดกับ MediaPipe
+numpy<2.0.0
+pandas>=2.2.0
+scikit-learn>=1.4.0
+tqdm>=4.66.1
+matplotlib>=3.8.2

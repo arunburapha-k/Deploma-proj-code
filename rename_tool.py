@@ -2,10 +2,10 @@ import os
 
 # ================= 1. ตั้งค่าตรงนี้ =================
 # โฟลเดอร์ที่เก็บคลิปดิบของคุณ (เปลี่ยน path ให้ถูกนะ)
-TARGET_FOLDER = r"data/raw/no_action" 
+TARGET_FOLDER = r"data/raw/feverish" 
 
 # ชื่อใหม่ที่อยากตั้ง (เช่น 'fever' จะกลายเป็น fever_0.mp4)
-NEW_NAME_PREFIX = "no_action" 
+NEW_NAME_PREFIX = "feverish" 
 
 # อยากให้เริ่มนับเลขที่เท่าไหร่? (ปกติเริ่ม 0)
 START_INDEX = 0 

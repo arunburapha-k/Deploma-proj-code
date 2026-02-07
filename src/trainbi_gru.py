@@ -5,8 +5,9 @@ import random
 import tensorflow as tf
 import json
 import math
-import keras_tuner as kt  # <--- ต้องลง library นี้เพิ่ม: pip install keras-tuner
+import keras_tuner as kt
 
+# os.environ["TF_USE_LEGACY_KERAS"] = "1"
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.callbacks import (
@@ -53,6 +54,7 @@ TRAIN_DIR = os.path.join(DATA_DIR, "processed_train")
 VAL_DIR = os.path.join(DATA_DIR, "processed_val")
 TEST_DIR = os.path.join(DATA_DIR, "processed_test")
 
+# ⚠️ อย่าลืมแก้ชื่อท่าตรงนี้ให้ครบนะครับ
 actions = np.array(["fever", "feverish", "no_action", "wounded"])
 
 sequence_length = 30

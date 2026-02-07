@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 import mediapipe as mp
 import tensorflow as tf  # ใช้ tf.lite.Interpreter
-
+# os.environ["TF_USE_LEGACY_KERAS"] = "1"
 # ========== CONFIG ==========
 MODEL_DIR        = "models"
 TFLITE_MODEL     = os.path.join(MODEL_DIR, "model_fp16.tflite")
@@ -26,7 +26,7 @@ ALPHA_EMA       = 0.20   # EMA smoothing (ต่ำ=นิ่ง)
 DEFAULT_THRESH  = 0.70   # เกณฑ์ความมั่นใจขั้นต่ำต่อคลาส
 TOP2_MARGIN     = 0.20   # อันดับ 1 ต้องทิ้งห่างอันดับ 2
 MIN_COVERAGE    = 0.50   # อย่างน้อยกี่เฟรมจาก 30 ที่มีแลนด์มาร์ก (>0 คือมีข้อมูลจริง)
-STABLE_FRAMES   = 10      # ผ่านเงื่อนไขซ้ำ ๆ กี่ครั้งจึงจะยืนยันผล (กันกระพริบ)
+STABLE_FRAMES   = 15      # ผ่านเงื่อนไขซ้ำ ๆ กี่ครั้งจึงจะยืนยันผล (กันกระพริบ)
 
 CAM_INDEX        = 0
 FRAME_W, FRAME_H = 1280, 720 #  640, 480  HD (1280 720) ความละเอียนดของกล้อง

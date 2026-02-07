@@ -1,6 +1,3 @@
-"""
-split_dataset.py (Improved)
-"""
 import os
 import random
 import shutil
@@ -10,8 +7,8 @@ from pathlib import Path
 RANDOM_SEED = 42
 
 # สัดส่วน train / val / test
-TRAIN_RATIO = 0.80
-VAL_RATIO = 0.10  # ที่เหลือเป็น test (0.10)
+TRAIN_RATIO = 0.70
+VAL_RATIO = 0.15  # ที่เหลือเป็น test (0.10)
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"

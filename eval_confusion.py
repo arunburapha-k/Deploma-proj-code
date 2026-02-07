@@ -1,5 +1,6 @@
 # eval_confusion.py
 import os, json, argparse, math, random
+# os.environ["TF_USE_LEGACY_KERAS"] = "1"
 import numpy as np
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
@@ -94,7 +95,7 @@ for ci, cname in enumerate(labels):
     for f in files:
         arr = np.load(os.path.join(cdir, f))
         if arr.shape != (SEQ_LEN, NUM_FEAT):
-            # print(f"[SKIP] {cname}/{f} shape={arr.shape}")
+            print(f"[SKIP] {cname}/{f} shape={arr.shape}")
             continue
         X.append(arr.astype(np.float32))
         y.append(ci)
