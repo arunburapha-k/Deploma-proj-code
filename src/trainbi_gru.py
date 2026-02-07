@@ -31,15 +31,15 @@ from tensorflow.keras.optimizers import Adam
 import tensorflow.keras.backend as K
 
 # ---------------- 0) EXPERIMENT CONFIG ----------------
-EXPERIMENT_NAME = "exp_gru_tuner"  # เปลี่ยนชื่อเป็น Tuner
+EXPERIMENT_NAME = "bi-gru-v0.3"  # เปลี่ยนชื่อเป็น Tuner
 RNN_TYPE = "gru"
 
 # Config พื้นฐานสำหรับการ Tuning (เราจะให้ Tuner เลือกค่าในช่วงเหล่านี้)
 # MIN_VALUE, MAX_VALUE, STEP
 # ไม่ต้องกำหนดค่าตายตัวตรงนี้แล้ว
 
-NUM_EPOCHS_SEARCH = 20   # จำนวน Epoch สูงสุดตอน Search (เอาพอประมาณให้รู้แนวโน้ม)
-NUM_EPOCHS_FINAL = 50    # จำนวน Epoch ตอนเทรนจริงด้วยค่าที่ดีที่สุด
+NUM_EPOCHS_SEARCH = 20  # จำนวน Epoch สูงสุดตอน Search (เอาพอประมาณให้รู้แนวโน้ม)
+NUM_EPOCHS_FINAL = 50  # จำนวน Epoch ตอนเทรนจริงด้วยค่าที่ดีที่สุด
 BATCH_SIZE = 32
 
 # class balancing
@@ -53,13 +53,7 @@ TRAIN_DIR = os.path.join(DATA_DIR, "processed_train")
 VAL_DIR = os.path.join(DATA_DIR, "processed_val")
 TEST_DIR = os.path.join(DATA_DIR, "processed_test")
 
-actions = np.array(
-    [
-    'fever',
-    'feverish',
-    'no_action',
-    ]
-)
+actions = np.array(["fever", "feverish", "no_action", "wounded"])
 
 sequence_length = 30
 num_features = 258
@@ -123,6 +117,7 @@ def data_generator(X_data, y_data, batch_size=32):
             batch_indices = indices[start:end]
             yield X_data[batch_indices], y_data[batch_indices]
 
+
 def balanced_data_generator(X_data, y_data, batch_size=32):
     num_classes = y_data.shape[1]
     y_int = np.argmax(y_data, axis=1)
@@ -132,11 +127,13 @@ def balanced_data_generator(X_data, y_data, batch_size=32):
         X_batch_list, y_batch_list = [], []
         for _ in range(batch_size):
             c = int(np.random.choice(classes))
-            if len(class_indices[c]) == 0: continue
+            if len(class_indices[c]) == 0:
+                continue
             idx = int(np.random.choice(class_indices[c]))
             X_batch_list.append(X_data[idx])
             y_batch_list.append(y_data[idx])
-        if not X_batch_list: continue
+        if not X_batch_list:
+            continue
         yield np.array(X_batch_list), np.array(y_batch_list)
 
 
@@ -146,8 +143,12 @@ class Attention(Layer):
         super(Attention, self).__init__(**kwargs)
 
     def build(self, input_shape):
-        self.W = self.add_weight(name="att_weight", shape=(input_shape[-1], 1), initializer="normal")
-        self.b = self.add_weight(name="att_bias", shape=(input_shape[1], 1), initializer="zeros")
+        self.W = self.add_weight(
+            name="att_weight", shape=(input_shape[-1], 1), initializer="normal"
+        )
+        self.b = self.add_weight(
+            name="att_bias", shape=(input_shape[1], 1), initializer="zeros"
+        )
         super(Attention, self).build(input_shape)
 
     def call(self, x):
@@ -167,9 +168,9 @@ def build_model(hp):
 
     # 1. Tuning Conv1D
     # ให้เลือก Filters ระหว่าง 32 ถึง 128 (เพิ่มทีละ 32)
-    hp_filters = hp.Int('conv_filters', min_value=32, max_value=128, step=32)
+    hp_filters = hp.Int("conv_filters", min_value=32, max_value=128, step=32)
     # ให้เลือก Kernel Size ว่าจะเป็น 3, 5 หรือ 7
-    hp_kernel = hp.Choice('conv_kernel', values=[3, 5, 7])
+    hp_kernel = hp.Choice("conv_kernel", values=[3, 5, 7])
 
     model.add(
         Conv1D(
@@ -185,35 +186,37 @@ def build_model(hp):
 
     # 2. Tuning RNN
     # ให้เลือก RNN Units
-    hp_rnn_units = hp.Int('rnn_units', min_value=32, max_value=128, step=32)
+    hp_rnn_units = hp.Int("rnn_units", min_value=32, max_value=128, step=32)
     rnn_layer_cls = GRU if RNN_TYPE.lower() == "gru" else LSTM
-    
+
     model.add(Bidirectional(rnn_layer_cls(hp_rnn_units, return_sequences=True)))
 
     # 3. Attention (Fixed)
     model.add(Attention())
 
     # 4. Tuning Dense & Dropout
-    hp_dense1 = hp.Int('dense_units1', min_value=32, max_value=128, step=32)
-    hp_dropout = hp.Float('dropout_rate', min_value=0.2, max_value=0.5, step=0.1)
+    hp_dense1 = hp.Int("dense_units1", min_value=32, max_value=128, step=32)
+    hp_dropout = hp.Float("dropout_rate", min_value=0.2, max_value=0.5, step=0.1)
 
     model.add(Dense(hp_dense1, activation="relu"))
     model.add(Dropout(hp_dropout))
-    
+
     # Dense ชั้นที่ 2 (Optional: จะ fix หรือ tune ก็ได้)
-    model.add(Dense(hp_dense1 // 2, activation="relu")) # ให้เป็นครึ่งหนึ่งของชั้นแรก
-    
+    model.add(Dense(hp_dense1 // 2, activation="relu"))  # ให้เป็นครึ่งหนึ่งของชั้นแรก
+
     model.add(Dense(actions.shape[0], activation="softmax"))
 
     # 5. Tuning Learning Rate
-    hp_learning_rate = hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])
+    hp_learning_rate = hp.Choice("learning_rate", values=[1e-2, 1e-3, 1e-4])
 
     # Compile
-    loss_fn = tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.0) # ตามคำแนะนำ Step 1
+    loss_fn = tf.keras.losses.CategoricalCrossentropy(
+        label_smoothing=0.0
+    )  # ตามคำแนะนำ Step 1
     model.compile(
         optimizer=Adam(learning_rate=hp_learning_rate),
         loss=loss_fn,
-        metrics=["accuracy"]
+        metrics=["accuracy"],
     )
     return model
 
@@ -223,15 +226,15 @@ print("\n--- Starting Hyperparameter Tuning (Keras Tuner) ---")
 
 tuner = kt.Hyperband(
     build_model,
-    objective='val_accuracy',
+    objective="val_accuracy",
     max_epochs=NUM_EPOCHS_SEARCH,
     factor=3,
-    directory='tuner_dir',
-    project_name=EXPERIMENT_NAME
+    directory="tuner_dir",
+    project_name=EXPERIMENT_NAME,
 )
 
 # Callbacks สำหรับตอน Search
-stop_early = EarlyStopping(monitor='val_loss', patience=5)
+stop_early = EarlyStopping(monitor="val_loss", patience=5)
 
 # เตรียม Generators
 if USE_BALANCED_SAMPLING:
@@ -257,7 +260,8 @@ tuner.search(
 print("\n--- Tuning Complete ---")
 best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
 
-print(f"""
+print(
+    f"""
 The hyperparameter search is complete. 
 The optimal number of units in the first densely-connected layer is {best_hps.get('dense_units1')} 
 and the optimal learning rate for the optimizer is {best_hps.get('learning_rate')}.
@@ -265,7 +269,8 @@ Conv Filters: {best_hps.get('conv_filters')}
 Conv Kernel: {best_hps.get('conv_kernel')}
 RNN Units: {best_hps.get('rnn_units')}
 Dropout: {best_hps.get('dropout_rate')}
-""")
+"""
+)
 
 # สร้างโมเดลจากค่าที่ดีที่สุด
 best_model = tuner.hypermodel.build(best_hps)
@@ -279,11 +284,17 @@ MODEL_DIR = "models"
 os.makedirs(log_dir, exist_ok=True)
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-checkpoint_path = os.path.join(MODEL_DIR, "best_tuned_model.keras")
+checkpoint_path = os.path.join(MODEL_DIR, "best_model.keras")
 tb_callback = TensorBoard(log_dir=log_dir)
-checkpoint_callback = ModelCheckpoint(checkpoint_path, monitor="val_accuracy", verbose=1, save_best_only=True, mode="max")
-reduce_lr = ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=4, min_lr=1e-6, verbose=1)
-early_stop = EarlyStopping(monitor="val_accuracy", patience=10, restore_best_weights=True)
+checkpoint_callback = ModelCheckpoint(
+    checkpoint_path, monitor="val_accuracy", verbose=1, save_best_only=True, mode="max"
+)
+reduce_lr = ReduceLROnPlateau(
+    monitor="val_loss", factor=0.5, patience=4, min_lr=1e-6, verbose=1
+)
+early_stop = EarlyStopping(
+    monitor="val_accuracy", patience=10, restore_best_weights=True
+)
 
 callbacks_list = [tb_callback, checkpoint_callback, reduce_lr, early_stop]
 
@@ -300,12 +311,14 @@ history = best_model.fit(
 
 # ---------------- 8) Evaluation & Save ----------------
 print("\nEvaluating Best Model on TEST set...")
-test_loss, test_acc = best_model.evaluate(X_test, y_test, batch_size=BATCH_SIZE, verbose=1)
+test_loss, test_acc = best_model.evaluate(
+    X_test, y_test, batch_size=BATCH_SIZE, verbose=1
+)
 print(f"Test loss = {test_loss:.4f}, Test accuracy = {test_acc:.4f}")
 
 # Save Model
-best_model.save(os.path.join(MODEL_DIR, "final_tuned_model.keras"))
-print(f"Final model saved to {os.path.join(MODEL_DIR, 'final_tuned_model.keras')}")
+best_model.save(os.path.join(MODEL_DIR, "final_model.keras"))
+print(f"Final model saved to {os.path.join(MODEL_DIR, 'final_model.keras')}")
 
 # Save Label Map
 label_map = {i: action for i, action in enumerate(actions)}
