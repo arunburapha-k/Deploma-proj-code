@@ -82,7 +82,7 @@ RAW_DATA_PATH = os.path.join("data", "raw")
 PROCESSED_DATA_PATH = os.path.join("data", "processed")
 
 # ⚠️ อย่าลืมแก้ชื่อท่าตรงนี้ให้ครบนะครับ
-actions = np.array(["fever", "feverish", "no_action", "wounded"])
+actions = np.array(["fever", "feverish", "no_action"])
 
 sequence_length = 30
 num_features = 258

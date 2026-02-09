@@ -1,0 +1,18 @@
+{
+    "fever": {
+        "threshold": 0.3,
+        "f1": 1.0
+    },
+    "feverish": {
+        "threshold": 0.3,
+        "f1": 1.0
+    },
+    "no_action": {
+        "threshold": 0.3,
+        "f1": 1.0
+    },
+    "wounded": {
+        "threshold": 0.3,
+        "f1": 1.0
+    }
+}

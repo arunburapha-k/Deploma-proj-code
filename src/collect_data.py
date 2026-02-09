@@ -6,14 +6,14 @@ import numpy as np
 # --- 1. การตั้งค่า (Config) ---
 RAW_DATA_PATH = os.path.join('data', 'raw') 
 
-# ชื่อท่าทางที่ต้องการเก็บ (แก้ตรงนี้ตามต้องการ)
+# ชื่อท่าทางที่ต้องการเก็บ
 actions = np.array(['distention']) 
 
-no_sequences = 60     # จำนวนคลิปต่อ 1 ท่า
-sequence_length = 60  # จำนวนเฟรมต่อ 1 คลิป (ตรงกับที่คุณใช้ตอน Extract)
-start_delay = 2       # เวลาพักระหว่างคลิป (วินาที) ให้เราเตรียมตัว
+no_sequences = 60     
+sequence_length = 60  
+start_delay = 2       
 
-# สร้างโฟลเดอร์รอไว้เลย
+# สร้างโฟลเดอร์
 for action in actions:
     try:
         os.makedirs(os.path.join(RAW_DATA_PATH, action))
@@ -21,85 +21,100 @@ for action in actions:
         pass
 
 # --- 2. เริ่มเปิดกล้อง ---
-cap = cv2.VideoCapture(0) # เลข 0 คือกล้อง Webcam, ถ้าใช้กล้องนอกลองเปลี่ยนเป็น 1, 2
+cap = cv2.VideoCapture(0)
 
-# เช็คว่าเปิดกล้องได้ไหม
 if not cap.isOpened():
     print("Cannot open camera")
     exit()
 
-# ตั้งค่าความละเอียด (Optional: ปรับให้ตรงกับที่จะใช้จริง)
+# ตั้งค่ากล้องให้ละเอียดที่สุดในแนวนอน (เพื่อให้ Crop แล้วยังชัด)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
-print("--- Starting Data Collection ---")
+# อ่านค่าจริงที่กล้องให้มา
+real_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+real_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+print(f"Original Camera Resolution: {real_w}x{real_h}")
+
+# --- 🔥 คำนวณขนาดการ Crop (9:16) 🔥 ---
+# เราจะใช้ความสูงเต็ม (h) แล้วคำนวณความกว้างใหม่ (new_w)
+# สูตร: new_w = h * (9/16)
+target_h = real_h
+target_w = int(real_h * (9/16)) 
+
+# คำนวณจุดเริ่มต้นตัดภาพ (เพื่อให้ภาพอยู่ตรงกลาง)
+start_x = (real_w - target_w) // 2
+end_x = start_x + target_w
+
+print(f"Target Video Resolution (Cropped): {target_w}x{target_h}")
+
+print("--- Starting Data Collection (Center Crop 9:16) ---")
 print("Press 'q' to quit early.")
 
 for action in actions:
     print(f"Collecting data for action: {action}")
-    
-    # รอให้คนเตรียมตัวก่อนเริ่มท่าใหม่
     print("Get Ready! Starting in 5 seconds...")
     time.sleep(5) 
     
     for sequence in range(no_sequences):
-        
-        # ตั้งชื่อไฟล์ .mp4
         save_path = os.path.join(RAW_DATA_PATH, action, f'{action}_{sequence}.mp4')
         
-        # ตั้งค่า VideoWriter เพื่อบันทึกไฟล์
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v') # หรือใช้ 'XVID' ถ้าเป็น .avi
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = 30.0 
-        out = cv2.VideoWriter(save_path, fourcc, fps, (width, height))
+        # ตั้งค่า VideoWriter เป็นขนาดที่ Crop แล้ว
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(save_path, fourcc, 30.0, (target_w, target_h))
         
-        # --- Loop เก็บ 30 เฟรม ---
         frames_captured = 0
         while frames_captured < sequence_length:
             ret, frame = cap.read()
             if not ret:
                 break
             
+            # --- 🔥 ตัดภาพ (Crop) แทนการหมุน 🔥 ---
+            # ตัดเอาเฉพาะตรงกลางภาพ
+            frame_vertical = frame[:, start_x:end_x]
+            
+            # (Optional) กลับด้านซ้ายขวาให้เหมือนกระจก (ถ้าต้องการ)
+            # frame_vertical = cv2.flip(frame_vertical, 1)
+
             # เขียนเฟรมลงไฟล์
-            out.write(frame)
+            out.write(frame_vertical)
             
-            # --- ส่วนแสดงผลบนหน้าจอ (GUI) ---
-            display_frame = frame.copy()
+            # --- ส่วนแสดงผล (GUI) ---
+            display_frame = frame_vertical.copy()
             
-            # ข้อความบอกสถานะ
-            cv2.putText(display_frame, f'Action: {action}', (15, 30), 
+            cv2.putText(display_frame, f'Action: {action}', (20, 50), 
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
-            cv2.putText(display_frame, f'Video: {sequence}/{no_sequences}', (15, 60), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 1, cv2.LINE_AA)
-            cv2.putText(display_frame, f'Frame: {frames_captured}/{sequence_length}', (15, 90), 
+            cv2.putText(display_frame, f'Video: {sequence}/{no_sequences}', (20, 100), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
+            cv2.putText(display_frame, f'Frame: {frames_captured}/{sequence_length}', (20, 150), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1, cv2.LINE_AA)
             
-            # แสดงภาพสด
-            cv2.imshow('OpenCV Data Collection', display_frame)
+            # แสดงภาพ
+            cv2.imshow('Data Collection (Cropped 9:16)', display_frame)
             
             frames_captured += 1
             
-            # กด q เพื่อหยุดกะทันหัน
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 out.release()
                 cap.release()
                 cv2.destroyAllWindows()
                 exit()
         
-        # บันทึกเสร็จ ปิดไฟล์คลิปนี้
         out.release()
         
-        # --- ช่วงพัก (Break) ระหว่างคลิป ---
-        # แสดงหน้าจอ "WAIT" เพื่อให้คนกลับมาท่าเตรียม (Neutral Pose)
+        # --- ช่วงพัก (Break) ---
         start_time = time.time()
         while (time.time() - start_time) < start_delay:
             ret, frame = cap.read()
-            cv2.putText(frame, 'WAIT... Reset Hand', (100, 200), 
+            # Crop ภาพตอนพักด้วย
+            frame_vertical = frame[:, start_x:end_x]
+            
+            cv2.putText(frame_vertical, 'WAIT...', (50, 300), 
                         cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4, cv2.LINE_AA)
-            cv2.putText(frame, f'Next: {action} ({sequence+1}/{no_sequences})', (50, 280),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
-            cv2.imshow('OpenCV Data Collection', frame)
+            cv2.putText(frame_vertical, f'Next: {action}', (50, 400),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+            
+            cv2.imshow('Data Collection (Cropped 9:16)', frame_vertical)
             cv2.waitKey(1)
 
 cap.release()

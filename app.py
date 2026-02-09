@@ -1,148 +1,158 @@
 # run_live_lstm_tflite.py
-# ทดลองรันโมเดล LSTM (.tflite – FP16) แบบเปิดกล้อง + UI แสดงชื่อท่าและเปอร์เซ็นต์ (Top-3 bars)
-# ต้องมีไฟล์:
-#   models/model_fp16.tflite
-#   models/label_map.json  (รูปแบบ {"0":"fever","1":"feverish",...})
-#   models/thresholds.json (ออปชัน)
+# ฉบับอัปเดต:
+# 1. แสดงผลแบบ 9:16 Center Crop (เหมือน collect_data.py)
+# 2. ใช้ Logic สกัดจุดแบบเดียวกับ extractkeypoint.py เป๊ะๆ (Pose + Hands)
+# 3. เพิ่มการวาดเส้นมือ (Hands) ลงบนหน้าจอเพื่อความชัดเจน
 
 import os, json, collections
 import cv2
 import numpy as np
 import mediapipe as mp
-import tensorflow as tf  # ใช้ tf.lite.Interpreter
-# os.environ["TF_USE_LEGACY_KERAS"] = "1"
+import tensorflow as tf
+
 # ========== CONFIG ==========
 MODEL_DIR        = "models"
 TFLITE_MODEL     = os.path.join(MODEL_DIR, "model_fp16.tflite")
 LABEL_MAP_PATH   = os.path.join(MODEL_DIR, "label_map.json")
-THRESH_PATH      = os.path.join(MODEL_DIR, "thresholds.json")  # optional
+THRESH_PATH      = os.path.join(MODEL_DIR, "thresholds.json")
 
 SEQ_LEN   = 30
 FEAT_DIM  = 258
 
 # UI / เสถียรภาพ
-PROCESS_EVERY_N = 1      # ประมวลผลทุก N เฟรม (1=ทุกเฟรม)
-ALPHA_EMA       = 0.20   # EMA smoothing (ต่ำ=นิ่ง)
-DEFAULT_THRESH  = 0.70   # เกณฑ์ความมั่นใจขั้นต่ำต่อคลาส
-TOP2_MARGIN     = 0.20   # อันดับ 1 ต้องทิ้งห่างอันดับ 2
-MIN_COVERAGE    = 0.50   # อย่างน้อยกี่เฟรมจาก 30 ที่มีแลนด์มาร์ก (>0 คือมีข้อมูลจริง)
-STABLE_FRAMES   = 15      # ผ่านเงื่อนไขซ้ำ ๆ กี่ครั้งจึงจะยืนยันผล (กันกระพริบ)
+PROCESS_EVERY_N = 1
+ALPHA_EMA       = 0.20
+DEFAULT_THRESH  = 0.70
+TOP2_MARGIN     = 0.20
+MIN_COVERAGE    = 0.50
+STABLE_FRAMES   = 10
 
 CAM_INDEX        = 0
-FRAME_W, FRAME_H = 1280, 720 #  640, 480  HD (1280 720) ความละเอียนดของกล้อง
-MODEL_COMPLEXITY = 1     # Mediapipe Holistic: 0 เร็วสุด / 1 สมดุล / 2 แม่นกว่าแต่ช้ากว่า
+# ตั้งค่ากล้องให้ละเอียดที่สุด (เดี๋ยวเราจะมาตัดออก)
+FRAME_W, FRAME_H = 1920, 1080 
+
+MODEL_COMPLEXITY = 1
 
 # ========== Utils ==========
 def nonzero_frames_ratio(seq30x258: np.ndarray) -> float:
     if seq30x258.shape != (SEQ_LEN, FEAT_DIM):
         return 0.0
-    # เฟรมที่ไม่ใช่ศูนย์ (มีแลนด์มาร์กจริง)
     return float(np.any(seq30x258 != 0.0, axis=1).sum()) / float(SEQ_LEN)
 
-# ดึง 258 ฟีเจอร์จากผลลัพธ์ Mediapipe
+# 🔥🔥🔥 แก้ไขฟังก์ชันนี้ให้เหมือน extractkeypoint.py เป๊ะๆ (รวมมือด้วย) 🔥🔥🔥
+def extract_258(results) -> np.ndarray:
+    """
+    สกัดฟีเจอร์ 258 ค่า: Pose(132) + L_Hand(63) + R_Hand(63)
+    """
+    # 1. หาจุดอ้างอิง (Reference Point) และ "ขนาดตัว" (Body Size)
+    ref_x, ref_y, ref_z = 0.5, 0.5, 0.0
+    body_size = 1.0  # ค่าหาร Default
 
-def extract_258(res) -> np.ndarray:
-    """
-    สกัดฟีเจอร์ 258 ค่า (Relative Coordinates + Scale Normalization)
-    """
-    # 1. หาจุดอ้างอิง (Reference Point) และขนาดตัว (Body Size)
-    ref_x, ref_y ,ref_z = 0.5, 0.5 ,0.0
-    body_size = 1.0  # <--- เพิ่มตัวแปรนี้
-    
-    if res.pose_landmarks:
-        landmarks = res.pose_landmarks.landmark
+    if results.pose_landmarks:
+        landmarks = results.pose_landmarks.landmark
+        # จุดอ้างอิง: กึ่งกลางไหล่
         ref_x = (landmarks[11].x + landmarks[12].x) / 2
         ref_y = (landmarks[11].y + landmarks[12].y) / 2
         ref_z = (landmarks[11].z + landmarks[12].z) / 2
 
-        # <--- เพิ่มส่วนคำนวณขนาดตัว (สำคัญมาก!) --->
+        # ⭐ คำนวณความกว้างไหล่ (ระยะห่างระหว่างไหล่ซ้าย-ขวา)
         dist_x = landmarks[11].x - landmarks[12].x
         dist_y = landmarks[11].y - landmarks[12].y
         body_size = np.sqrt(dist_x**2 + dist_y**2)
-        
-        # ป้องกันหารด้วย 0
-        if body_size < 0.001: body_size = 1.0
-        # <-------------------------------------->
 
-    # ฟังก์ชันย่อย: แปลงและ Flatten
-    def get_relative_flat(landmarks_obj, include_vis=False):
+        # ป้องกันการหารด้วย 0
+        if body_size < 0.001:
+            body_size = 1.0
+
+    def get_relative_coords(landmarks_obj, include_vis=False):
+        # ถ้าไม่เจอมือ หรือตัว ให้ return 0 ทั้งหมด
         if not landmarks_obj:
-            return np.zeros(33*4) if include_vis else np.zeros(21*3)
-        
+            return np.zeros(33 * 4) if include_vis else np.zeros(21 * 3)
+
         data = []
-        for lm in landmarks_obj.landmark:
-            # 1. ลบจุดอ้างอิง
-            rel_x = lm.x - ref_x
-            rel_y = lm.y - ref_y
-            
-            # <--- 2. หารด้วยขนาดตัว (เพิ่มตรงนี้) --->
+        for res in landmarks_obj.landmark:
+            # --- 1. ลบจุดอ้างอิง (ย้ายจุดศูนย์กลาง) ---
+            rel_x = res.x - ref_x
+            rel_y = res.y - ref_y
+
+            # --- 2. หารด้วยขนาดตัว (ปรับสเกล) ---
             rel_x = rel_x / body_size
             rel_y = rel_y / body_size
-            # <--------------------------------->
-            
-            # ★★★ แก้ตรงนี้ครับ: สร้าง rel_z ที่หารด้วย body_size ★★★
-            rel_z = (lm.z - ref_z) / body_size
-            
+
+            # (Optional) ถ้าอยากให้ Z scale ด้วย ก็หารได้
+            rel_z = (res.z - ref_z) / body_size
+
             if include_vis:
-                data.append([rel_x, rel_y, rel_z, lm.visibility])
+                data.append([rel_x, rel_y, rel_z, res.visibility])
             else:
                 data.append([rel_x, rel_y, rel_z])
-        
+
         return np.array(data, dtype=np.float32).flatten()
 
-    # 2. เรียกใช้
-    pose = get_relative_flat(res.pose_landmarks, include_vis=True)
-    lh   = get_relative_flat(res.left_hand_landmarks, include_vis=False)
-    rh   = get_relative_flat(res.right_hand_landmarks, include_vis=False)
+    # 2. เรียกใช้ให้ครบทั้ง 3 ส่วน (Pose, Left Hand, Right Hand)
+    pose = get_relative_coords(results.pose_landmarks, include_vis=True)       # 33 * 4 = 132
+    lh   = get_relative_coords(results.left_hand_landmarks, include_vis=False) # 21 * 3 = 63
+    rh   = get_relative_coords(results.right_hand_landmarks, include_vis=False) # 21 * 3 = 63
 
+    # รวมกันเป็น 258
     return np.concatenate([pose, lh, rh])
 
 def draw_header(image, label_text, conf):
     H, W = image.shape[:2]
-    cv2.rectangle(image, (0, 0), (W, 64), (0, 0, 0), -1)
-    cv2.putText(image, f"{label_text} ({conf*100:.1f}%)",
-                (12, 42), cv2.FONT_HERSHEY_SIMPLEX, 1.0,
-                (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.rectangle(image, (0, 0), (W, 80), (0, 0, 0), -1)
+    
+    cv2.putText(image, f"{label_text}",
+                (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
+                (0, 255, 0) if conf > 0 else (200, 200, 200), 2, cv2.LINE_AA)
+    
+    if conf > 0:
+        cv2.putText(image, f"Conf: {conf*100:.1f}%",
+                    (20, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                    (255, 255, 255), 1, cv2.LINE_AA)
 
-def draw_topk_bars(image, labels, probs, k=3, origin=(12, 80)):
+def draw_topk_bars(image, labels, probs, k=3, origin=(20, 100)):
     H, W = image.shape[:2]
     x0, y0 = origin
-    bar_w = int(W * 0.45)
-    bar_h = 24
-    gap   = 10
+    bar_w = int(W * 0.85) 
+    bar_h = 20
+    gap   = 15
     idxs = np.argsort(probs)[-k:][::-1]
+    
+    cv2.putText(image, "Top Predictions:", (x0, y0 - 10), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
+
     for i, idx in enumerate(idxs):
         p = float(probs[idx])
         w = int(bar_w * p)
         y = y0 + i * (bar_h + gap)
-        cv2.rectangle(image, (x0, y), (x0 + bar_w, y + bar_h), (60, 60, 60), 1)
-        cv2.rectangle(image, (x0, y), (x0 + w, y + bar_h), (40, 180, 255), -1)
-        cv2.putText(image, f"{labels[idx]}  {p*100:5.1f}%",
-                    (x0 + bar_w + 12, y + bar_h - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                    (255, 255, 255), 1, cv2.LINE_AA)
+        
+        cv2.rectangle(image, (x0, y), (x0 + bar_w, y + bar_h), (50, 50, 50), 1)
+        color = (0, 255, 255) if i == 0 and p > 0.5 else (100, 100, 100)
+        cv2.rectangle(image, (x0, y), (x0 + w, y + bar_h), color, -1)
+        
+        text = f"{labels[idx]}: {p*100:.1f}%"
+        cv2.putText(image, text,
+                    (x0 + 5, y + 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                    (255, 255, 255) if p > 0.5 else (180, 180, 180), 1, cv2.LINE_AA)
 
-# ========== Load labels / thresholds ==========
+# ========== Load Config ==========
 print("TF:", tf.__version__)
 
 if not os.path.exists(TFLITE_MODEL):
-    raise FileNotFoundError(f"Not found TFLite model file: {TFLITE_MODEL}")
-print("[OK] Found TFLite model:", TFLITE_MODEL)
-
+    raise FileNotFoundError(f"Not found TFLite model: {TFLITE_MODEL}")
 if not os.path.exists(LABEL_MAP_PATH):
     raise FileNotFoundError(f"Not found label map: {LABEL_MAP_PATH}")
+
 with open(LABEL_MAP_PATH, "r", encoding="utf-8") as f:
-    label_map = json.load(f)   # {"0":"classA","1":"classB",...}
+    label_map = json.load(f)
 labels = [label_map[str(i)] for i in range(len(label_map))]
-num_classes = len(labels)
-print(f"[OK] Labels ({num_classes}):", labels)
 
 per_th = {c: DEFAULT_THRESH for c in labels}
 if os.path.exists(THRESH_PATH):
     try:
         with open(THRESH_PATH, "r", encoding="utf-8") as f:
             raw = json.load(f)
-        # รองรับทั้ง {"0":{"threshold":0.7}, ...} หรือ {"fever":{"threshold":0.7}, ...}
         for k, v in raw.items():
             cname = labels[int(k)] if k.isdigit() and int(k) < len(labels) else k
             if cname in per_th:
@@ -150,14 +160,10 @@ if os.path.exists(THRESH_PATH):
                     per_th[cname] = float(v["threshold"])
                 else:
                     per_th[cname] = float(v)
-        print("[OK] thresholds.json loaded.")
-    except Exception as e:
-        print("[Warn] thresholds.json ignored:", e)
+    except: pass
 
-# ========== Load TFLite model ==========
+# ========== Load TFLite ==========
 interpreter = tf.lite.Interpreter(model_path=TFLITE_MODEL)
-
-# เตรียม input shape ให้ตรง [1, SEQ_LEN, FEAT_DIM]
 input_details = interpreter.get_input_details()
 input_index   = input_details[0]['index']
 input_shape   = list(input_details[0]['shape'])
@@ -165,9 +171,7 @@ input_shape   = list(input_details[0]['shape'])
 if input_shape != [1, SEQ_LEN, FEAT_DIM]:
     try:
         interpreter.resize_tensor_input(input_index, [1, SEQ_LEN, FEAT_DIM])
-        print(f"[Info] Resize TFLite input from {input_shape} to [1,{SEQ_LEN},{FEAT_DIM}]")
-    except Exception as e:
-        print("[Warn] cannot resize input tensor:", e)
+    except: pass
 
 interpreter.allocate_tensors()
 input_details  = interpreter.get_input_details()
@@ -175,22 +179,11 @@ output_details = interpreter.get_output_details()
 output_index   = output_details[0]['index']
 input_dtype    = input_details[0]['dtype']
 
-print("[OK] TFLite interpreter ready.")
-print("  Input:", input_details[0]['shape'], input_dtype)
-print("  Output:", output_details[0]['shape'], output_details[0]['dtype'])
-
-def run_tflite(x_1x30x258: np.ndarray) -> np.ndarray:
-    """
-    x_1x30x258: np.ndarray รูป [1,SEQ_LEN,FEAT_DIM]
-    คืนค่า probs: np.ndarray [num_classes] (float32)
-    """
-    # แปลง dtype ให้ตรงกับโมเดล (FP16/FP32)
-    x_in = x_1x30x258.astype(input_dtype)
+def run_tflite(x_in):
+    x_in = x_in.astype(input_dtype)
     interpreter.set_tensor(input_details[0]['index'], x_in)
     interpreter.invoke()
-    out = interpreter.get_tensor(output_index)  # [1, num_classes]
-    # แปลงกลับเป็น float32 สำหรับคำนวณต่อ
-    return out[0].astype(np.float32)
+    return interpreter.get_tensor(output_index)[0].astype(np.float32)
 
 # ========== Mediapipe ==========
 mp_holistic = mp.solutions.holistic
@@ -202,64 +195,71 @@ holistic_kwargs = dict(
     min_tracking_confidence=0.5,
 )
 
-# ========== Camera loop ==========
+# ========== Camera Setup ==========
 cap = cv2.VideoCapture(CAM_INDEX)
-if not cap.isOpened():
-    raise RuntimeError("Cannot open camera")
-cap.set(cv2.CAP_PROP_FRAME_WIDTH,  FRAME_W)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
+
+# อ่านค่าจริงเพื่อคำนวณการ Crop (Logic เดียวกับ collect_data.py)
+real_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+real_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+print(f"Camera Resolution: {real_w}x{real_h}")
+
+# --- 🔥 คำนวณจุดตัด 9:16 🔥 ---
+target_w = int(real_h * (9/16))  # คำนวณความกว้างตามสัดส่วน 9:16
+start_x = (real_w - target_w) // 2
+end_x = start_x + target_w
+
+print(f"Crop Region: x={start_x} to {end_x} (Width={target_w}, Height={real_h})")
 
 seq_buf = collections.deque(maxlen=SEQ_LEN)
 prev_probs = None
 frame_id = 0
 
-shown_label, shown_conf = "...", 0.0
+shown_label, shown_conf = "Scanning...", 0.0
 candidate_label, candidate_streak = None, 0
 
 with mp_holistic.Holistic(**holistic_kwargs) as holistic:
     while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        # สะท้อนภาพซ้าย-ขวาให้เหมือนหน้ากระจก ใช้กับท่าทางมือถนัดกว่า
-        frame = cv2.flip(frame, 1)
+        ok, raw_frame = cap.read()
+        if not ok: break
+        
+        # 1. Flip กระจก
+        raw_frame = cv2.flip(raw_frame, 1)
+        
+        # 2. Crop ตรงกลาง
+        frame = raw_frame[:, start_x:end_x]
 
-        # รัน mediapipe (แปลงเป็น RGB ข้างใน)
+        # 3. Process
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         rgb.flags.writeable = False
         res = holistic.process(rgb)
         rgb.flags.writeable = True
 
-        # เก็บฟีเจอร์ 258 ลงบัฟเฟอร์ 30 เฟรม
+        # ใช้ฟังก์ชัน extract_258 ที่เราแก้ไขใหม่
         seq_buf.append(extract_258(res))
 
-        # คำนวณผลเป็นจังหวะ
         if (frame_id % PROCESS_EVERY_N == 0) and len(seq_buf) == SEQ_LEN:
-            x = np.array(seq_buf, dtype=np.float32)[None, ...]  # [1,30,258]
+            x = np.array(seq_buf, dtype=np.float32)[None, ...]
+            probs = run_tflite(x)
 
-            # ===== ใช้ TFLite แทน Keras =====
-            probs = run_tflite(x)  # [C], float32
-
-            # EMA smoothing เพื่อความนิ่ง
             smoothed = probs if prev_probs is None else (
                 ALPHA_EMA * probs + (1 - ALPHA_EMA) * prev_probs
             )
             prev_probs = smoothed
 
-            # จัดอันดับ
             top3 = np.argsort(smoothed)[-3:][::-1]
             top, second = int(top3[0]), int(top3[1])
             name_top = labels[top]
             conf_top = float(smoothed[top])
             conf_second = float(smoothed[second])
             margin = conf_top - conf_second
-
+            
             need  = per_th.get(name_top, DEFAULT_THRESH)
-            cover = nonzero_frames_ratio(x[0])   # ตรวจว่ามีแลนด์มาร์กจริงพอหรือยัง
+            cover = nonzero_frames_ratio(x[0])
 
             passed = (conf_top >= need) and (margin >= TOP2_MARGIN) and (cover >= MIN_COVERAGE)
 
-            # hysteresis กันกระพริบ
             if passed:
                 if candidate_label == name_top:
                     candidate_streak += 1
@@ -269,15 +269,30 @@ with mp_holistic.Holistic(**holistic_kwargs) as holistic:
                     shown_label, shown_conf = name_top, conf_top
             else:
                 candidate_label, candidate_streak = None, 0
-                shown_label, shown_conf = "...", 0.0
+                shown_label, shown_conf = "Scanning...", 0.0
 
-            # วาด Top-3 bars
-            draw_topk_bars(frame, labels, smoothed, k=3, origin=(12, 84))
+            draw_topk_bars(frame, labels, smoothed, k=3, origin=(20, 130))
+            
+            # 🔥🔥🔥 เพิ่มการวาดเส้นมือทั้งสองข้าง 🔥🔥🔥
+            if res.pose_landmarks:
+                mp.solutions.drawing_utils.draw_landmarks(
+                    frame, res.pose_landmarks, mp_holistic.POSE_CONNECTIONS)
+            
+            if res.left_hand_landmarks:
+                mp.solutions.drawing_utils.draw_landmarks(
+                    frame, res.left_hand_landmarks, mp_holistic.HAND_CONNECTIONS)
 
-        # แถบหัวแสดงผล
+            if res.right_hand_landmarks:
+                mp.solutions.drawing_utils.draw_landmarks(
+                    frame, res.right_hand_landmarks, mp_holistic.HAND_CONNECTIONS)
+
         draw_header(frame, shown_label, shown_conf)
 
-        cv2.imshow("TSL Medical Gesture — LSTM (TFLite FP16, live)", frame)
+        # แสดงผล
+        disp_h = 800
+        disp_w = int(target_w * (disp_h / real_h))
+        cv2.imshow("App Simulator (9:16 Cropped + Hands)", cv2.resize(frame, (disp_w, disp_h)))
+        
         frame_id += 1
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
