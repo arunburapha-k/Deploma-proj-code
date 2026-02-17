@@ -82,7 +82,13 @@ RAW_DATA_PATH = os.path.join("data", "raw")
 PROCESSED_DATA_PATH = os.path.join("data", "processed")
 
 # ⚠️ อย่าลืมแก้ชื่อท่าตรงนี้ให้ครบนะครับ
-actions = np.array(["fever", "feverish", "no_action"])
+actions = np.array([
+                    # "fever", 
+                    # "feverish", 
+                    # "no_action",
+                    # "wounded" ,
+                    "insomnia"
+                    ])
 
 sequence_length = 30
 num_features = 258
@@ -142,7 +148,8 @@ with mp_holistic.Holistic(
                 if not success:
                     sequence_data.append(np.zeros(num_features))
                     continue
-
+                # เลข 1 หมายถึง Flip แนวนอน (Horizontal)
+                frame = cv2.flip(frame, 1)
                 results = mediapipe_process(frame, holistic)
                 keypoints = extract_keypoints(results)  # ใช้ฟังก์ชันใหม่ตรงนี้
                 sequence_data.append(keypoints)
