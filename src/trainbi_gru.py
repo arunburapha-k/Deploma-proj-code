@@ -32,20 +32,20 @@ from tensorflow.keras.optimizers import Adam
 import tensorflow.keras.backend as K
 
 # ---------------- 0) EXPERIMENT CONFIG ----------------
-EXPERIMENT_NAME = "bi-gru-fixed-v1"
+EXPERIMENT_NAME = "bi-gru-v1.1.1"
 RNN_TYPE = "gru"
 
 # --- FIXED HYPERPARAMETERS (กำหนดค่าเองตามต้องการ) ---
 CONV_FILTERS  = 64      
 CONV_KERNEL   = 5       
 RNN_UNITS     = 64      
-DENSE_UNITS1  = 64      
+DENSE_UNITS1  = 128      
 DENSE_UNITS2  = 32      
-DROPOUT_RATE  = 0.5
+DROPOUT_RATE  = 0.7
 
 LEARNING_RATE = 1e-3
 NUM_EPOCHS    = 50
-BATCH_SIZE    = 32
+BATCH_SIZE    = 8
 
 # class balancing
 USE_CLASS_WEIGHT = True
@@ -59,7 +59,7 @@ VAL_DIR = os.path.join(DATA_DIR, "processed_val")
 TEST_DIR = os.path.join(DATA_DIR, "processed_test")
 
 # ⚠️ อย่าลืมแก้ชื่อท่าตรงนี้ให้ครบนะครับ
-actions = np.array(["fever", "feverish", "no_action", "wounded"])
+actions = np.array(["fever", "feverish", "no_action","wounded","insomnia"])
 
 sequence_length = 30
 num_features = 258
@@ -181,7 +181,7 @@ def build_model():
     model.add(BatchNormalization())
     
     # Optional: ใช้ SpatialDropout1D จะดีกว่า Dropout ธรรมดาสำหรับ Sequence
-    model.add(SpatialDropout1D(0.2)) 
+    model.add(SpatialDropout1D(0.7))
     model.add(MaxPooling1D(pool_size=2))
 
     # 2. RNN Block
@@ -196,7 +196,7 @@ def build_model():
     model.add(Dropout(DROPOUT_RATE))
 
     # Dense ชั้นที่ 2 (ตามที่คุณขอ)
-    model.add(Dense(DENSE_UNITS2, activation="relu"))
+    # model.add(Dense(DENSE_UNITS2, activation="relu"))
 
     # Output Layer
     model.add(Dense(actions.shape[0], activation="softmax"))
