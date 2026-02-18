@@ -69,10 +69,11 @@ RAW_DATA_PATH = os.path.join("data", "raw")
 PROCESSED_DATA_PATH = os.path.join("data", "processed")
 
 # รายชื่อท่าทาง
-actions = np.array(["fever", "feverish", "insomnia", "no_action", "wounded"])
+actions = np.array([
+    "fever", "feverish", "insomnia", "no_action", "wounded"])
 
 sequence_length = 30
-num_features = 18
+num_features = 183
 
 # --- 4. สร้างโฟลเดอร์ปลายทาง ---
 for action in actions:
