@@ -70,7 +70,7 @@ actions = np.array(
 )
 
 sequence_length = 30
-num_features = 258
+num_features = 183 # 258
 
 SEED = 42
 np.random.seed(SEED)

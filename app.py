@@ -17,7 +17,7 @@ LABEL_MAP_PATH   = os.path.join(MODEL_DIR, "label_map.json")
 THRESH_PATH      = os.path.join(MODEL_DIR, "thresholds.json")
 
 SEQ_LEN   = 30
-FEAT_DIM  = 258
+FEAT_DIM  = 183 
 
 # UI / เสถียรภาพ
 PROCESS_EVERY_N = 1
@@ -25,7 +25,7 @@ ALPHA_EMA       = 0.20
 DEFAULT_THRESH  = 0.70
 TOP2_MARGIN     = 0.20
 MIN_COVERAGE    = 0.50
-STABLE_FRAMES   = 10
+STABLE_FRAMES   = 30
 
 CAM_INDEX        = 0
 # ตั้งค่ากล้องให้ละเอียดที่สุด (เดี๋ยวเราจะมาตัดออก)
@@ -40,61 +40,44 @@ def nonzero_frames_ratio(seq30x258: np.ndarray) -> float:
     return float(np.any(seq30x258 != 0.0, axis=1).sum()) / float(SEQ_LEN)
 
 # 🔥🔥🔥 แก้ไขฟังก์ชันนี้ให้เหมือน extractkeypoint.py เป๊ะๆ (รวมมือด้วย) 🔥🔥🔥
-def extract_258(results) -> np.ndarray:
+def extract_183(results) -> np.ndarray:
     """
-    สกัดฟีเจอร์ 258 ค่า: Pose(132) + L_Hand(63) + R_Hand(63)
+    สกัดฟีเจอร์ 183 ค่า: Pose(99) + L_Hand(42) + R_Hand(42)
     """
-    # 1. หาจุดอ้างอิง (Reference Point) และ "ขนาดตัว" (Body Size)
-    ref_x, ref_y, ref_z = 0.5, 0.5, 0.0
-    body_size = 1.0  # ค่าหาร Default
+    ref_x, ref_y = 0.5, 0.5
+    body_size = 1.0
 
     if results.pose_landmarks:
         landmarks = results.pose_landmarks.landmark
-        # จุดอ้างอิง: กึ่งกลางไหล่
         ref_x = (landmarks[11].x + landmarks[12].x) / 2
         ref_y = (landmarks[11].y + landmarks[12].y) / 2
-        ref_z = (landmarks[11].z + landmarks[12].z) / 2
-
-        # ⭐ คำนวณความกว้างไหล่ (ระยะห่างระหว่างไหล่ซ้าย-ขวา)
+        
         dist_x = landmarks[11].x - landmarks[12].x
         dist_y = landmarks[11].y - landmarks[12].y
         body_size = np.sqrt(dist_x**2 + dist_y**2)
-
-        # ป้องกันการหารด้วย 0
-        if body_size < 0.001:
-            body_size = 1.0
+        if body_size < 0.001: body_size = 1.0
 
     def get_relative_coords(landmarks_obj, include_vis=False):
-        # ถ้าไม่เจอมือ หรือตัว ให้ return 0 ทั้งหมด
         if not landmarks_obj:
-            return np.zeros(33 * 4) if include_vis else np.zeros(21 * 3)
+            return np.zeros(33 * 3) if include_vis else np.zeros(21 * 2)
 
         data = []
         for res in landmarks_obj.landmark:
-            # --- 1. ลบจุดอ้างอิง (ย้ายจุดศูนย์กลาง) ---
-            rel_x = res.x - ref_x
-            rel_y = res.y - ref_y
+            rel_x = (res.x - ref_x) / body_size
+            rel_y = (res.y - ref_y) / body_size
 
-            # --- 2. หารด้วยขนาดตัว (ปรับสเกล) ---
-            rel_x = rel_x / body_size
-            rel_y = rel_y / body_size
-
-            # (Optional) ถ้าอยากให้ Z scale ด้วย ก็หารได้
-            rel_z = (res.z - ref_z) / body_size
-
+            # 🔥 ตัด Z ทิ้ง
             if include_vis:
-                data.append([rel_x, rel_y, rel_z, res.visibility])
+                data.append([rel_x, rel_y, res.visibility])
             else:
-                data.append([rel_x, rel_y, rel_z])
+                data.append([rel_x, rel_y])
 
         return np.array(data, dtype=np.float32).flatten()
 
-    # 2. เรียกใช้ให้ครบทั้ง 3 ส่วน (Pose, Left Hand, Right Hand)
-    pose = get_relative_coords(results.pose_landmarks, include_vis=True)       # 33 * 4 = 132
-    lh   = get_relative_coords(results.left_hand_landmarks, include_vis=False) # 21 * 3 = 63
-    rh   = get_relative_coords(results.right_hand_landmarks, include_vis=False) # 21 * 3 = 63
+    pose = get_relative_coords(results.pose_landmarks, include_vis=True)
+    lh   = get_relative_coords(results.left_hand_landmarks, include_vis=False)
+    rh   = get_relative_coords(results.right_hand_landmarks, include_vis=False)
 
-    # รวมกันเป็น 258
     return np.concatenate([pose, lh, rh])
 
 def draw_header(image, label_text, conf):
@@ -236,8 +219,7 @@ with mp_holistic.Holistic(**holistic_kwargs) as holistic:
         res = holistic.process(rgb)
         rgb.flags.writeable = True
 
-        # ใช้ฟังก์ชัน extract_258 ที่เราแก้ไขใหม่
-        seq_buf.append(extract_258(res))
+        seq_buf.append(extract_183(res))
 
         if (frame_id % PROCESS_EVERY_N == 0) and len(seq_buf) == SEQ_LEN:
             x = np.array(seq_buf, dtype=np.float32)[None, ...]

@@ -48,7 +48,7 @@ print("Model loaded successfully!")
 # ----------------- 3. เตรียมฟังก์ชัน Serving (Fix Shape) -----------------
 # ใช้ concrete function เพื่อ fix shape และ freeze graph (กัน TensorList/variable ค้าง)
 @tf.function(input_signature=[
-    tf.TensorSpec(shape=[1, 30, 258], dtype=tf.float32, name='input')
+    tf.TensorSpec(shape=[1, 30, 183], dtype=tf.float32, name='input')
 ])
 def serving(x):
     return model(x, training=False)
