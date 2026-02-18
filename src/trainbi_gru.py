@@ -26,7 +26,7 @@ from tensorflow.keras.layers import (
     MaxPooling1D,
     Input,
     Layer,
-    SpatialDropout1D
+    SpatialDropout1D,
 )
 from tensorflow.keras.optimizers import Adam
 import tensorflow.keras.backend as K
@@ -36,16 +36,16 @@ EXPERIMENT_NAME = "bi-gru-v1.1.1"
 RNN_TYPE = "gru"
 
 # --- FIXED HYPERPARAMETERS (กำหนดค่าเองตามต้องการ) ---
-CONV_FILTERS  = 64      
-CONV_KERNEL   = 5       
-RNN_UNITS     = 64      
-DENSE_UNITS1  = 128      
-DENSE_UNITS2  = 32      
-DROPOUT_RATE  = 0.7
+CONV_FILTERS = 256
+CONV_KERNEL = 3
+RNN_UNITS = 64
+DENSE_UNITS1 = 128
+SPATIAL_DROPOUT_RATE = 0.6
+DROPOUT_RATE = 0.6
 
 LEARNING_RATE = 1e-3
-NUM_EPOCHS    = 50
-BATCH_SIZE    = 8
+NUM_EPOCHS = 50
+BATCH_SIZE = 16
 
 # class balancing
 USE_CLASS_WEIGHT = True
@@ -59,7 +59,15 @@ VAL_DIR = os.path.join(DATA_DIR, "processed_val")
 TEST_DIR = os.path.join(DATA_DIR, "processed_test")
 
 # ⚠️ อย่าลืมแก้ชื่อท่าตรงนี้ให้ครบนะครับ
-actions = np.array(["fever", "feverish", "no_action","wounded","insomnia"])
+actions = np.array(
+    [
+        "fever",
+        "feverish",
+        "insomnia",
+        "no_action",
+        "wounded",
+    ]
+)
 
 sequence_length = 30
 num_features = 258
@@ -179,15 +187,15 @@ def build_model():
         )
     )
     model.add(BatchNormalization())
-    
+
     # Optional: ใช้ SpatialDropout1D จะดีกว่า Dropout ธรรมดาสำหรับ Sequence
-    model.add(SpatialDropout1D(0.7))
+    model.add(SpatialDropout1D(SPATIAL_DROPOUT_RATE))
     model.add(MaxPooling1D(pool_size=2))
 
     # 2. RNN Block
     rnn_layer_cls = GRU if RNN_TYPE.lower() == "gru" else LSTM
     model.add(Bidirectional(rnn_layer_cls(RNN_UNITS, return_sequences=True)))
-    
+
     # 3. Attention
     model.add(Attention())
 
@@ -195,7 +203,7 @@ def build_model():
     model.add(Dense(DENSE_UNITS1, activation="relu"))
     model.add(Dropout(DROPOUT_RATE))
 
-    # Dense ชั้นที่ 2 (ตามที่คุณขอ)
+    # Dense ชั้นที่ 2
     # model.add(Dense(DENSE_UNITS2, activation="relu"))
 
     # Output Layer
@@ -203,7 +211,7 @@ def build_model():
 
     # Compile
     loss_fn = tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.0)
-    
+
     model.compile(
         optimizer=Adam(learning_rate=LEARNING_RATE),
         loss=loss_fn,
@@ -214,7 +222,9 @@ def build_model():
 
 # ---------------- 5) Training Process ----------------
 print(f"\n--- Starting Training (Experiment: {EXPERIMENT_NAME}) ---")
-print(f"Config: Filters={CONV_FILTERS}, RNN={RNN_UNITS}, Dense={DENSE_UNITS1}/{DENSE_UNITS2}, Drop={DROPOUT_RATE}")
+print(
+    f"Config: Filters={CONV_FILTERS}, RNN={RNN_UNITS}, Dense={DENSE_UNITS1}, Drop={DROPOUT_RATE}"
+)
 
 # สร้างโมเดล
 model = build_model()
@@ -263,9 +273,7 @@ history = model.fit(
 
 # ---------------- 6) Evaluation & Save ----------------
 print("\nEvaluating Model on TEST set...")
-test_loss, test_acc = model.evaluate(
-    X_test, y_test, batch_size=BATCH_SIZE, verbose=1
-)
+test_loss, test_acc = model.evaluate(X_test, y_test, batch_size=BATCH_SIZE, verbose=1)
 print(f"Test loss = {test_loss:.4f}, Test accuracy = {test_acc:.4f}")
 
 # Save Final Model
