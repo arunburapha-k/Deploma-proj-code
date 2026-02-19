@@ -13,14 +13,13 @@ def mediapipe_process(image, model):
     image_rgb.flags.writeable = True
     return results
 
-
 def extract_keypoints(results):
     """
-    ฉบับตัด Z ออก: เหลือแค่ X, Y (และ Visibility สำหรับ Pose)
-    Dimension รวม: 183
+    ดึงค่า X, Y, Z (และ Visibility สำหรับ Pose)
+    Dimension รวม: 258
     """
     # 1. หาจุดอ้างอิง (Reference Point) และ "ขนาดตัว" (Body Size)
-    ref_x, ref_y = 0.5, 0.5  # ตัด ref_z ออก
+    ref_x, ref_y, ref_z = 0.5, 0.5, 0.0  # 🔥 เพิ่ม ref_z
     body_size = 1.0
 
     if results.pose_landmarks:
@@ -28,8 +27,9 @@ def extract_keypoints(results):
         # จุดอ้างอิง: กึ่งกลางไหล่
         ref_x = (landmarks[11].x + landmarks[12].x) / 2
         ref_y = (landmarks[11].y + landmarks[12].y) / 2
+        ref_z = (landmarks[11].z + landmarks[12].z) / 2 # 🔥 คำนวณจุดกึ่งกลาง Z
 
-        # ขนาดตัว (Distance ไหล่ซ้าย-ขวา)
+        # ขนาดตัว (Distance ไหล่ซ้าย-ขวา) วัดแค่ X, Y แบบเดิมได้
         dist_x = landmarks[11].x - landmarks[12].x
         dist_y = landmarks[11].y - landmarks[12].y
         body_size = np.sqrt(dist_x**2 + dist_y**2)
@@ -38,21 +38,21 @@ def extract_keypoints(results):
             body_size = 1.0
 
     def get_relative_coords(landmarks_obj, include_vis=False):
-        # 🔥 แก้ไขการจองพื้นที่ 0 (Zero Padding)
+        # 🔥 แก้ไขการจองพื้นที่ 0 (Zero Padding) ให้รองรับ Z
         if not landmarks_obj:
-            # Pose: 33 * 3 (x,y,vis) | Hand: 21 * 2 (x,y)
-            return np.zeros(33 * 3) if include_vis else np.zeros(21 * 2)
+            # Pose: 33 * 4 (x,y,z,vis) | Hand: 21 * 3 (x,y,z)
+            return np.zeros(33 * 4) if include_vis else np.zeros(21 * 3)
 
         data = []
         for res in landmarks_obj.landmark:
             rel_x = (res.x - ref_x) / body_size
             rel_y = (res.y - ref_y) / body_size
+            rel_z = (res.z - ref_z) / body_size  # 🔥 คำนวณ Relative Z
 
-            # 🔥 ตัด Z ทิ้ง ไม่เอามาใส่ใน list
             if include_vis:
-                data.append([rel_x, rel_y, res.visibility])  # 3 ค่า
+                data.append([rel_x, rel_y, rel_z, res.visibility])  # 🔥 4 ค่า
             else:
-                data.append([rel_x, rel_y])  # 2 ค่า
+                data.append([rel_x, rel_y, rel_z])  # 🔥 3 ค่า
 
         return np.array(data).flatten()
 
@@ -63,7 +63,6 @@ def extract_keypoints(results):
 
     return np.concatenate([pose, lh, rh])
 
-
 # --- Config หลัก ---
 RAW_DATA_PATH = os.path.join("data", "raw")
 PROCESSED_DATA_PATH = os.path.join("data", "processed")
@@ -73,7 +72,7 @@ actions = np.array([
     "fever", "feverish", "insomnia", "no_action", "wounded"])
 
 sequence_length = 30
-num_features = 183
+num_features = 258
 
 # --- 4. สร้างโฟลเดอร์ปลายทาง ---
 for action in actions:
