@@ -14,23 +14,20 @@ def mediapipe_process(image, model):
     return results
 
 
-def extract_keypoints(results):
+def extract_keypoints(results, prev_lh=None, prev_rh=None):
     """
-    ดึงค่า X, Y, Z (และ Visibility สำหรับ Pose)
-    Dimension รวม: 258
+    ดึงค่าพิกัดสัมพัทธ์ Dimension: 258
+    🔥 เพิ่มระบบจำค่ามือล่าสุด (Forward Fill) ป้องกันการวาร์ปเมื่อจับมือไม่ได้
     """
-    # 1. หาจุดอ้างอิง (Reference Point) และ "ขนาดตัว" (Body Size)
-    ref_x, ref_y, ref_z = 0.5, 0.5, 0.0  # 🔥 เพิ่ม ref_z
+    ref_x, ref_y, ref_z = 0.5, 0.5, 0.0
     body_size = 1.0
 
     if results.pose_landmarks:
         landmarks = results.pose_landmarks.landmark
-        # จุดอ้างอิง: กึ่งกลางไหล่
         ref_x = (landmarks[11].x + landmarks[12].x) / 2
         ref_y = (landmarks[11].y + landmarks[12].y) / 2
         ref_z = (landmarks[11].z + landmarks[12].z) / 2
 
-        # ขนาดตัว (Distance ไหล่ซ้าย-ขวา) วัดแค่ X, Y แบบเดิมได้
         dist_x = landmarks[11].x - landmarks[12].x
         dist_y = landmarks[11].y - landmarks[12].y
         body_size = np.sqrt(dist_x**2 + dist_y**2)
@@ -38,31 +35,36 @@ def extract_keypoints(results):
         if body_size < 0.001:
             body_size = 1.0
 
-    def get_relative_coords(landmarks_obj, include_vis=False):
-        # 🔥 แก้ไขการจองพื้นที่ 0 (Zero Padding) ให้รองรับ Z
+    def get_relative_coords(landmarks_obj, is_pose=False, prev_state=None):
         if not landmarks_obj:
-            # Pose: 33 * 4 (x,y,z,vis) | Hand: 21 * 3 (x,y,z)
-            return np.zeros(33 * 4) if include_vis else np.zeros(21 * 3)
+            # 🔥 ถ้าไม่เจอจุด (เช่น มือหาย) ให้ใช้ค่าจากเฟรมก่อนหน้า ถ้ามี
+            if prev_state is not None and np.any(prev_state != 0):
+                return prev_state
+            # ถ้าไม่มีจริงๆ ค่อยคืนค่าศูนย์ (กรณีเริ่มคลิปมาก็ไม่เจอมือเลย)
+            return np.zeros(33 * 4) if is_pose else np.zeros(21 * 3)
 
         data = []
         for res in landmarks_obj.landmark:
             rel_x = (res.x - ref_x) / body_size
             rel_y = (res.y - ref_y) / body_size
-            rel_z = (res.z - ref_z) / body_size  # 🔥 คำนวณ Relative Z
+            rel_z = (res.z - ref_z) / body_size
 
-            if include_vis:
-                data.append([rel_x, rel_y, rel_z, res.visibility])  # 🔥 4 ค่า
+            if is_pose:
+                data.append([rel_x, rel_y, rel_z, res.visibility])
             else:
-                data.append([rel_x, rel_y, rel_z])  # 🔥 3 ค่า
+                data.append([rel_x, rel_y, rel_z])
 
         return np.array(data).flatten()
 
-    # 2. เรียกใช้
-    pose = get_relative_coords(results.pose_landmarks, include_vis=True)
-    lh = get_relative_coords(results.left_hand_landmarks, include_vis=False)
-    rh = get_relative_coords(results.right_hand_landmarks, include_vis=False)
+    pose = get_relative_coords(results.pose_landmarks, is_pose=True)
+    lh = get_relative_coords(
+        results.left_hand_landmarks, is_pose=False, prev_state=prev_lh
+    )
+    rh = get_relative_coords(
+        results.right_hand_landmarks, is_pose=False, prev_state=prev_rh
+    )
 
-    return np.concatenate([pose, lh, rh])
+    return np.concatenate([pose, lh, rh]), lh, rh
 
 
 # --- Config หลัก ---
@@ -70,40 +72,42 @@ RAW_DATA_PATH = os.path.join("data", "raw")
 PROCESSED_DATA_PATH = os.path.join("data", "processed")
 
 # รายชื่อท่าทาง
-actions = np.array([
-    # "anxiety",
-    # "cramps",
-    # "diarrhea",
-    # "fed_up_food",
-    # "fever",
-    # "feverish",
-    # "food_allergy",
-    # "insomnia",
-    # "itching",
-    # "no_action",
-    # "pain",
-    # "polyuria"
-    # "red_eye",
-    "suffocated",
-    # "swollen",
-    # "vertigo",
-])
-
+actions = np.array(
+    [
+        "anxiety",
+        "cramps",
+        "diarrhea",
+        "fed_up_food",
+        "fever",
+        "feverish",
+        "food_allergy",
+        "insomnia",
+        "itching",
+        "no_action",
+        "pain",
+        "polyuria" "red_eye",
+        "suffocated",
+        "swollen",
+        "vertigo",
+    ]
+)
 
 sequence_length = 30
 num_features = 258
 
-# --- 4. สร้างโฟลเดอร์ปลายทาง ---
 for action in actions:
-    action_path = os.path.join(PROCESSED_DATA_PATH, action)
-    os.makedirs(action_path, exist_ok=True)
+    os.makedirs(os.path.join(PROCESSED_DATA_PATH, action), exist_ok=True)
 print(f"Ensured '{PROCESSED_DATA_PATH}' folders exist.")
 
-# --- 5. ลูปหลักสำหรับประมวลผลวิดีโอ ---
-print("--- Starting Video Preprocessing (Relative Coordinates) ---")
+print("--- Starting Video Preprocessing (Relative + Smooth Tracking) ---")
 
+# 🔥 อัปเกรด: ใช้ model_complexity=2 และบังคับใช้ Tracker
 with mp_holistic.Holistic(
-    min_detection_confidence=0.5, min_tracking_confidence=0.5
+    static_image_mode=False,  # บังคับ False เพื่อใช้ฟีเจอร์ Tracking ให้เส้นเนียน
+    model_complexity=2,  # เพิ่มความแม่นยำระดับสุดยอด
+    smooth_landmarks=True,  # เปิดระบบลดการสั่น
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5,
 ) as holistic:
 
     for action in actions:
@@ -111,53 +115,58 @@ with mp_holistic.Holistic(
         action_processed_path = os.path.join(PROCESSED_DATA_PATH, action)
 
         if not os.path.exists(action_raw_path):
-            print(
-                f"[Warning] Source folder not found: {action_raw_path}. Skipping '{action}'."
-            )
             continue
 
         video_files = [
             f
             for f in os.listdir(action_raw_path)
-            if f.endswith((".mp4", ".avi", ".mov", ".MOV", ".mkv"))
+            if f.endswith((".mp4", ".avi", ".mov"))
         ]
-
         print(f"\nProcessing Action: '{action}' ({len(video_files)} videos found)")
 
         for sequence_idx, video_file in enumerate(video_files):
             video_path = os.path.join(action_raw_path, video_file)
-
-            sequence_data = []
             cap = cv2.VideoCapture(video_path)
 
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            all_frames_data = []  # เก็บทุกเฟรมไว้ก่อน
 
-            if total_frames < sequence_length:
-                print(
-                    f"  [Warning] Video {video_file} is too short ({total_frames} frames). Skipping."
-                )
-                cap.release()
-                continue
+            # ตัวแปรจำค่ามือล่าสุดในคลิปนี้
+            prev_lh = np.zeros(21 * 3)
+            prev_rh = np.zeros(21 * 3)
 
-            frame_indices = np.linspace(0, total_frames - 1, sequence_length, dtype=int)
-
-            for frame_idx in frame_indices:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            # 🔥 อัปเกรด: อ่านวิดีโอเรียงเฟรมตามธรรมชาติ (ไม่กระโดดข้าม) Tracker จะได้ไม่พัง
+            while True:
                 success, frame = cap.read()
-
                 if not success:
-                    sequence_data.append(np.zeros(num_features))
-                    continue
-                # เลข 1 หมายถึง Flip แนวนอน (Horizontal)
+                    break
+
                 frame = cv2.flip(frame, 1)
                 results = mediapipe_process(frame, holistic)
-                keypoints = extract_keypoints(results)  # ใช้ฟังก์ชันใหม่ตรงนี้
-                sequence_data.append(keypoints)
+
+                # ส่งค่า prev_lh, prev_rh เข้าไปอัปเดต
+                keypoints, prev_lh, prev_rh = extract_keypoints(
+                    results, prev_lh, prev_rh
+                )
+                all_frames_data.append(keypoints)
 
             cap.release()
 
+            # 🔥 เมื่อได้ครบทุกเฟรม ค่อยมา Sample ทีหลังให้เหลือ 30 เฟรม
+            total_extracted = len(all_frames_data)
+            if total_extracted < sequence_length:
+                print(
+                    f"  [Warning] Video {video_file} is too short ({total_extracted} frames). Skipping."
+                )
+                continue
+
+            # ดึง index กระจายตัวให้ได้ 30 เฟรมพอดี
+            frame_indices = np.linspace(
+                0, total_extracted - 1, sequence_length, dtype=int
+            )
+            sequence_data = np.array(all_frames_data)[frame_indices]
+
             npy_path = os.path.join(action_processed_path, f"{sequence_idx}.npy")
-            np.save(npy_path, np.array(sequence_data))
+            np.save(npy_path, sequence_data)
 
             print(
                 f"\r  Processed {sequence_idx + 1}/{len(video_files)} videos...", end=""
