@@ -1,9 +1,3 @@
-# run_live_lstm_tflite.py
-# ฉบับอัปเดต:
-# 1. แสดงผลแบบ 9:16 Center Crop (เหมือน collect_data.py)
-# 2. ใช้ Logic สกัดจุดแบบเดียวกับ extractkeypoint.py เป๊ะๆ (Pose + Hands)
-# 3. เพิ่มการวาดเส้นมือ (Hands) ลงบนหน้าจอเพื่อความชัดเจน
-
 import os, json, collections
 import cv2
 import numpy as np
@@ -31,6 +25,7 @@ CAM_INDEX = 0
 # ตั้งค่ากล้องให้ละเอียดที่สุด (เดี๋ยวเราจะมาตัดออก)
 FRAME_W, FRAME_H = 1920, 1080
 
+# แนะนำให้ใช้ 1 สำหรับแอปพลิเคชันเพื่อรักษา FPS ให้ลื่นไหล (เว้นแต่เครื่องแรงมากสามารถปรับเป็น 2 ได้)
 MODEL_COMPLEXITY = 1
 
 
@@ -41,19 +36,20 @@ def nonzero_frames_ratio(seq30x258: np.ndarray) -> float:
     return float(np.any(seq30x258 != 0.0, axis=1).sum()) / float(SEQ_LEN)
 
 
-# 🔥🔥🔥 แก้ไขฟังก์ชันนี้ให้เหมือน extractkeypoint.py เป๊ะๆ (รวมมือด้วย) 🔥🔥🔥
-def extract_258(results) -> np.ndarray:
+# 🔥🔥🔥 อัปเกรดฟังก์ชันสกัดจุด (Pro Version: มีระบบจำค่าย้อนหลัง) 🔥🔥🔥
+def extract_258(results, prev_lh=None, prev_rh=None):
     """
     สกัดฟีเจอร์ 258 ค่า: Pose(132) + L_Hand(63) + R_Hand(63)
+    มีระบบ Forward Fill ป้องกันจุดกระชากเวลามือหาย
     """
-    ref_x, ref_y, ref_z = 0.5, 0.5, 0.0  # 🔥 เพิ่ม Z
+    ref_x, ref_y, ref_z = 0.5, 0.5, 0.0  
     body_size = 1.0
 
     if results.pose_landmarks:
         landmarks = results.pose_landmarks.landmark
         ref_x = (landmarks[11].x + landmarks[12].x) / 2
         ref_y = (landmarks[11].y + landmarks[12].y) / 2
-        ref_z = (landmarks[11].z + landmarks[12].z) / 2  # 🔥 เพิ่ม Z
+        ref_z = (landmarks[11].z + landmarks[12].z) / 2  
 
         dist_x = landmarks[11].x - landmarks[12].x
         dist_y = landmarks[11].y - landmarks[12].y
@@ -61,29 +57,32 @@ def extract_258(results) -> np.ndarray:
         if body_size < 0.001:
             body_size = 1.0
 
-    def get_relative_coords(landmarks_obj, include_vis=False):
+    def get_relative_coords(landmarks_obj, is_pose=False, prev_state=None):
         if not landmarks_obj:
-            # 🔥 อัปเดตขนาด Padding
-            return np.zeros(33 * 4) if include_vis else np.zeros(21 * 3)
+            # 🔥 ถ้าไม่เจอจุด (เช่น มือหาย) ให้ใช้ค่าจากเฟรมก่อนหน้า ถ้ามี
+            if prev_state is not None and np.any(prev_state != 0):
+                return prev_state
+            # ถ้าไม่มีจริงๆ ค่อยคืนค่าศูนย์
+            return np.zeros(33 * 4) if is_pose else np.zeros(21 * 3)
 
         data = []
         for res in landmarks_obj.landmark:
             rel_x = (res.x - ref_x) / body_size
             rel_y = (res.y - ref_y) / body_size
-            rel_z = (res.z - ref_z) / body_size  # 🔥 เพิ่ม Z
+            rel_z = (res.z - ref_z) / body_size  
 
-            if include_vis:
+            if is_pose:
                 data.append([rel_x, rel_y, rel_z, res.visibility])
             else:
                 data.append([rel_x, rel_y, rel_z])
 
         return np.array(data, dtype=np.float32).flatten()
 
-    pose = get_relative_coords(results.pose_landmarks, include_vis=True)
-    lh = get_relative_coords(results.left_hand_landmarks, include_vis=False)
-    rh = get_relative_coords(results.right_hand_landmarks, include_vis=False)
+    pose = get_relative_coords(results.pose_landmarks, is_pose=True)
+    lh = get_relative_coords(results.left_hand_landmarks, is_pose=False, prev_state=prev_lh)
+    rh = get_relative_coords(results.right_hand_landmarks, is_pose=False, prev_state=prev_rh)
 
-    return np.concatenate([pose, lh, rh])
+    return np.concatenate([pose, lh, rh]), lh, rh
 
 def draw_header(image, label_text, conf):
     H, W = image.shape[:2]
@@ -222,13 +221,11 @@ cap = cv2.VideoCapture(CAM_INDEX)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
 
-# อ่านค่าจริงเพื่อคำนวณการ Crop (Logic เดียวกับ collect_data.py)
 real_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 real_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 print(f"Camera Resolution: {real_w}x{real_h}")
 
-# --- 🔥 คำนวณจุดตัด 9:16 🔥 ---
-target_w = int(real_h * (9 / 16))  # คำนวณความกว้างตามสัดส่วน 9:16
+target_w = int(real_h * (9 / 16)) 
 start_x = (real_w - target_w) // 2
 end_x = start_x + target_w
 
@@ -241,25 +238,27 @@ frame_id = 0
 shown_label, shown_conf = "Scanning...", 0.0
 candidate_label, candidate_streak = None, 0
 
+# 🔥 เตรียมตัวแปรสำหรับจำค่ามือล่าสุดก่อนเข้าลูป
+prev_lh_state = np.zeros(21 * 3, dtype=np.float32)
+prev_rh_state = np.zeros(21 * 3, dtype=np.float32)
+
 with mp_holistic.Holistic(**holistic_kwargs) as holistic:
     while True:
         ok, raw_frame = cap.read()
         if not ok:
             break
 
-        # 1. Flip กระจก
         raw_frame = cv2.flip(raw_frame, 1)
-
-        # 2. Crop ตรงกลาง
         frame = raw_frame[:, start_x:end_x]
 
-        # 3. Process
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         rgb.flags.writeable = False
         res = holistic.process(rgb)
         rgb.flags.writeable = True
 
-        seq_buf.append(extract_258(res))
+        # 🔥 เรียกใช้งานระบบ Forward Fill
+        features, prev_lh_state, prev_rh_state = extract_258(res, prev_lh_state, prev_rh_state)
+        seq_buf.append(features)
 
         if (frame_id % PROCESS_EVERY_N == 0) and len(seq_buf) == SEQ_LEN:
             x = np.array(seq_buf, dtype=np.float32)[None, ...]
@@ -301,7 +300,6 @@ with mp_holistic.Holistic(**holistic_kwargs) as holistic:
 
             draw_topk_bars(frame, labels, smoothed, k=3, origin=(20, 130))
 
-            # 🔥🔥🔥 เพิ่มการวาดเส้นมือทั้งสองข้าง 🔥🔥🔥
             if res.pose_landmarks:
                 mp.solutions.drawing_utils.draw_landmarks(
                     frame, res.pose_landmarks, mp_holistic.POSE_CONNECTIONS
@@ -319,7 +317,6 @@ with mp_holistic.Holistic(**holistic_kwargs) as holistic:
 
         draw_header(frame, shown_label, shown_conf)
 
-        # แสดงผล
         disp_h = 800
         disp_w = int(target_w * (disp_h / real_h))
         cv2.imshow(
