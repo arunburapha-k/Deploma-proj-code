@@ -13,6 +13,7 @@ def mediapipe_process(image, model):
     image_rgb.flags.writeable = True
     return results
 
+
 def extract_keypoints(results):
     """
     ดึงค่า X, Y, Z (และ Visibility สำหรับ Pose)
@@ -27,7 +28,7 @@ def extract_keypoints(results):
         # จุดอ้างอิง: กึ่งกลางไหล่
         ref_x = (landmarks[11].x + landmarks[12].x) / 2
         ref_y = (landmarks[11].y + landmarks[12].y) / 2
-        ref_z = (landmarks[11].z + landmarks[12].z) / 2 # 🔥 คำนวณจุดกึ่งกลาง Z
+        ref_z = (landmarks[11].z + landmarks[12].z) / 2
 
         # ขนาดตัว (Distance ไหล่ซ้าย-ขวา) วัดแค่ X, Y แบบเดิมได้
         dist_x = landmarks[11].x - landmarks[12].x
@@ -63,13 +64,31 @@ def extract_keypoints(results):
 
     return np.concatenate([pose, lh, rh])
 
+
 # --- Config หลัก ---
 RAW_DATA_PATH = os.path.join("data", "raw")
 PROCESSED_DATA_PATH = os.path.join("data", "processed")
 
 # รายชื่อท่าทาง
 actions = np.array([
-    "fever", "feverish", "insomnia", "no_action", "wounded"])
+    # "anxiety",
+    # "cramps",
+    # "diarrhea",
+    # "fed_up_food",
+    # "fever",
+    # "feverish",
+    # "food_allergy",
+    # "insomnia",
+    # "itching",
+    # "no_action",
+    # "pain",
+    # "polyuria"
+    # "red_eye",
+    "suffocated",
+    # "swollen",
+    # "vertigo",
+])
+
 
 sequence_length = 30
 num_features = 258
