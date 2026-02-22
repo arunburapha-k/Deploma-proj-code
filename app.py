@@ -17,7 +17,7 @@ LABEL_MAP_PATH = os.path.join(MODEL_DIR, "label_map.json")
 THRESH_PATH = os.path.join(MODEL_DIR, "thresholds.json")
 
 SEQ_LEN = 30
-FEAT_DIM = 183
+FEAT_DIM = 258
 
 # UI / เสถียรภาพ
 PROCESS_EVERY_N = 1
