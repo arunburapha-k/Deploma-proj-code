@@ -7,10 +7,10 @@ import numpy as np
 RAW_DATA_PATH = os.path.join('data', 'raw') 
 
 # ชื่อท่าทางที่ต้องการเก็บ
-actions = np.array(['distention']) 
+actions = np.array(['suffocated_r2']) 
 
-no_sequences = 60     
-sequence_length = 60  
+no_sequences = 20     
+sequence_length = 90  
 start_delay = 2       
 
 # สร้างโฟลเดอร์
@@ -53,8 +53,8 @@ print("Press 'q' to quit early.")
 
 for action in actions:
     print(f"Collecting data for action: {action}")
-    print("Get Ready! Starting in 5 seconds...")
-    time.sleep(5) 
+    print("Get Ready! Starting in 4 seconds...")
+    time.sleep(4) 
     
     for sequence in range(no_sequences):
         save_path = os.path.join(RAW_DATA_PATH, action, f'{action}_{sequence}.mp4')
@@ -74,7 +74,7 @@ for action in actions:
             frame_vertical = frame[:, start_x:end_x]
             
             # (Optional) กลับด้านซ้ายขวาให้เหมือนกระจก (ถ้าต้องการ)
-            # frame_vertical = cv2.flip(frame_vertical, 1)
+            frame_vertical = cv2.flip(frame_vertical, 1)
 
             # เขียนเฟรมลงไฟล์
             out.write(frame_vertical)

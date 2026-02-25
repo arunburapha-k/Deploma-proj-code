@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import mediapipe as mp
 import tensorflow as tf
+import threading  # 🔥 นำเข้าไลบรารีสำหรับทำ Multithreading
 
 # ========== CONFIG ==========
 MODEL_DIR = "models"
@@ -14,20 +15,67 @@ SEQ_LEN = 30
 FEAT_DIM = 258
 
 # UI / เสถียรภาพ
-PROCESS_EVERY_N = 1
+PROCESS_EVERY_N = 1  
 ALPHA_EMA = 0.20
 DEFAULT_THRESH = 0.70
 TOP2_MARGIN = 0.20
 MIN_COVERAGE = 0.50
-STABLE_FRAMES = 30
+STABLE_FRAMES = 5
 
 CAM_INDEX = 0
-# ตั้งค่ากล้องให้ละเอียดที่สุด (เดี๋ยวเราจะมาตัดออก)
-FRAME_W, FRAME_H = 1920, 1080
-
-# แนะนำให้ใช้ 1 สำหรับแอปพลิเคชันเพื่อรักษา FPS ให้ลื่นไหล (เว้นแต่เครื่องแรงมากสามารถปรับเป็น 2 ได้)
+FRAME_W, FRAME_H = 1280, 720
 MODEL_COMPLEXITY = 1
 
+
+# 🔥🔥🔥 คลาสสำหรับดึงภาพจากกล้องแบบแยก Thread (Pro Version: กันภาพซ้ำ) 🔥🔥🔥
+class ThreadedCamera:
+    def __init__(self, src=0, width=1280, height=720):
+        self.cap = cv2.VideoCapture(src)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)  
+        
+        self.real_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.real_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        self.grabbed, self.frame = self.cap.read()
+        self.started = False
+        self.read_lock = threading.Lock()
+        self.new_frame_available = True # 🔥 เพิ่มตัวแปรเช็คภาพใหม่
+
+    def start(self):
+        if self.started:
+            return self
+        self.started = True
+        self.thread = threading.Thread(target=self.update, args=())
+        self.thread.daemon = True  
+        self.thread.start()
+        return self
+
+    def update(self):
+        while self.started:
+            grabbed, frame = self.cap.read()
+            with self.read_lock:
+                self.grabbed = grabbed
+                self.frame = frame
+                self.new_frame_available = True # 🔥 อัปเดตเมื่อมีภาพใหม่เข้ากล้องจริงๆ
+
+    def read(self):
+        with self.read_lock:
+            # 🔥 ถ้ายังไม่มีภาพใหม่เข้ามาจาก Thread ให้ส่งค่า False กลับไปเพื่อข้ามการทำงาน
+            if not self.new_frame_available:
+                return False, None
+            
+            self.new_frame_available = False # 🔥 รีเซ็ตสถานะว่าภาพนี้ถูกอ่านไปแล้ว
+            frame = self.frame.copy() if self.grabbed else None
+            
+        return self.grabbed, frame
+
+    def stop(self):
+        self.started = False
+        if hasattr(self, 'thread'):
+            self.thread.join()
+        self.cap.release()
 
 # ========== Utils ==========
 def nonzero_frames_ratio(seq30x258: np.ndarray) -> float:
@@ -36,12 +84,7 @@ def nonzero_frames_ratio(seq30x258: np.ndarray) -> float:
     return float(np.any(seq30x258 != 0.0, axis=1).sum()) / float(SEQ_LEN)
 
 
-# 🔥🔥🔥 อัปเกรดฟังก์ชันสกัดจุด (Pro Version: มีระบบจำค่าย้อนหลัง) 🔥🔥🔥
 def extract_258(results, prev_lh=None, prev_rh=None):
-    """
-    สกัดฟีเจอร์ 258 ค่า: Pose(132) + L_Hand(63) + R_Hand(63)
-    มีระบบ Forward Fill ป้องกันจุดกระชากเวลามือหาย
-    """
     ref_x, ref_y, ref_z = 0.5, 0.5, 0.0  
     body_size = 1.0
 
@@ -59,10 +102,8 @@ def extract_258(results, prev_lh=None, prev_rh=None):
 
     def get_relative_coords(landmarks_obj, is_pose=False, prev_state=None):
         if not landmarks_obj:
-            # 🔥 ถ้าไม่เจอจุด (เช่น มือหาย) ให้ใช้ค่าจากเฟรมก่อนหน้า ถ้ามี
             if prev_state is not None and np.any(prev_state != 0):
                 return prev_state
-            # ถ้าไม่มีจริงๆ ค่อยคืนค่าศูนย์
             return np.zeros(33 * 4) if is_pose else np.zeros(21 * 3)
 
         data = []
@@ -111,7 +152,6 @@ def draw_header(image, label_text, conf):
             cv2.LINE_AA,
         )
 
-
 def draw_topk_bars(image, labels, probs, k=3, origin=(20, 100)):
     H, W = image.shape[:2]
     x0, y0 = origin
@@ -152,7 +192,6 @@ def draw_topk_bars(image, labels, probs, k=3, origin=(20, 100)):
             cv2.LINE_AA,
         )
 
-
 # ========== Load Config ==========
 print("TF:", tf.__version__)
 
@@ -181,7 +220,8 @@ if os.path.exists(THRESH_PATH):
         pass
 
 # ========== Load TFLite ==========
-interpreter = tf.lite.Interpreter(model_path=TFLITE_MODEL)
+# 🔥 อัปเกรด: เปิดใช้งาน Multi-threading ให้ TFLite (ใช้ CPU 4 Core ช่วยกันคิด)
+interpreter = tf.lite.Interpreter(model_path=TFLITE_MODEL, num_threads=4)
 input_details = interpreter.get_input_details()
 input_index = input_details[0]["index"]
 input_shape = list(input_details[0]["shape"])
@@ -198,13 +238,11 @@ output_details = interpreter.get_output_details()
 output_index = output_details[0]["index"]
 input_dtype = input_details[0]["dtype"]
 
-
 def run_tflite(x_in):
     x_in = x_in.astype(input_dtype)
     interpreter.set_tensor(input_details[0]["index"], x_in)
     interpreter.invoke()
     return interpreter.get_tensor(output_index)[0].astype(np.float32)
-
 
 # ========== Mediapipe ==========
 mp_holistic = mp.solutions.holistic
@@ -217,12 +255,12 @@ holistic_kwargs = dict(
 )
 
 # ========== Camera Setup ==========
-cap = cv2.VideoCapture(CAM_INDEX)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
+# 🔥 อัปเกรด: เรียกใช้ ThreadedCamera แทน VideoCapture ธรรมดา
+print("Starting Threaded Camera...")
+cam = ThreadedCamera(src=CAM_INDEX, width=FRAME_W, height=FRAME_H).start()
 
-real_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-real_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+real_w = cam.real_w
+real_h = cam.real_h
 print(f"Camera Resolution: {real_w}x{real_h}")
 
 target_w = int(real_h * (9 / 16)) 
@@ -238,15 +276,16 @@ frame_id = 0
 shown_label, shown_conf = "Scanning...", 0.0
 candidate_label, candidate_streak = None, 0
 
-# 🔥 เตรียมตัวแปรสำหรับจำค่ามือล่าสุดก่อนเข้าลูป
 prev_lh_state = np.zeros(21 * 3, dtype=np.float32)
 prev_rh_state = np.zeros(21 * 3, dtype=np.float32)
 
 with mp_holistic.Holistic(**holistic_kwargs) as holistic:
     while True:
-        ok, raw_frame = cap.read()
-        if not ok:
-            break
+        # 🔥 อ่านภาพจาก Thread แทนการรอโหลดจากกล้องตรงๆ
+        ok, raw_frame = cam.read()
+        
+        if not ok or raw_frame is None:
+            continue
 
         raw_frame = cv2.flip(raw_frame, 1)
         frame = raw_frame[:, start_x:end_x]
@@ -256,7 +295,6 @@ with mp_holistic.Holistic(**holistic_kwargs) as holistic:
         res = holistic.process(rgb)
         rgb.flags.writeable = True
 
-        # 🔥 เรียกใช้งานระบบ Forward Fill
         features, prev_lh_state, prev_rh_state = extract_258(res, prev_lh_state, prev_rh_state)
         seq_buf.append(features)
 
@@ -298,22 +336,24 @@ with mp_holistic.Holistic(**holistic_kwargs) as holistic:
                 candidate_label, candidate_streak = None, 0
                 shown_label, shown_conf = "Scanning...", 0.0
 
-            draw_topk_bars(frame, labels, smoothed, k=3, origin=(20, 130))
+        if prev_probs is not None:
+            draw_topk_bars(frame, labels, prev_probs, k=3, origin=(20, 130))
 
-            if res.pose_landmarks:
-                mp.solutions.drawing_utils.draw_landmarks(
-                    frame, res.pose_landmarks, mp_holistic.POSE_CONNECTIONS
-                )
+        # (ปิดคอมเมนต์ไว้เพื่อประหยัดสเปค หากต้องการดูเส้นให้เอาเครื่องหมาย # ออก)
+        # if res.pose_landmarks:
+        #     mp.solutions.drawing_utils.draw_landmarks(
+        #         frame, res.pose_landmarks, mp_holistic.POSE_CONNECTIONS
+        #     )
 
-            if res.left_hand_landmarks:
-                mp.solutions.drawing_utils.draw_landmarks(
-                    frame, res.left_hand_landmarks, mp_holistic.HAND_CONNECTIONS
-                )
+        # if res.left_hand_landmarks:
+        #     mp.solutions.drawing_utils.draw_landmarks(
+        #         frame, res.left_hand_landmarks, mp_holistic.HAND_CONNECTIONS
+        #     )
 
-            if res.right_hand_landmarks:
-                mp.solutions.drawing_utils.draw_landmarks(
-                    frame, res.right_hand_landmarks, mp_holistic.HAND_CONNECTIONS
-                )
+        # if res.right_hand_landmarks:
+        #     mp.solutions.drawing_utils.draw_landmarks(
+        #         frame, res.right_hand_landmarks, mp_holistic.HAND_CONNECTIONS
+        #     )
 
         draw_header(frame, shown_label, shown_conf)
 
@@ -327,5 +367,6 @@ with mp_holistic.Holistic(**holistic_kwargs) as holistic:
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
-cap.release()
+# 🔥 ปิดการทำงานของกล้องที่อยู่ใน Thread ให้เรียบร้อย
+cam.stop()
 cv2.destroyAllWindows()

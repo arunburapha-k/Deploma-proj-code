@@ -23,10 +23,8 @@ TRAIN_DIR = os.path.join(ROOT_DIR, "processed_train")
 RANDOM_SEED = 42
 
 SEQ_LEN = 30
-# 🔥 แก้ Dimension กลับเป็น 258
 FEAT_DIM = 258 
 
-# 🔥 แก้โครงสร้างย่อยให้มี Z กลับมา
 POSE_LM = 33
 POSE_DIM = 4    # x, y, z, vis
 HAND_LM = 21
@@ -41,19 +39,20 @@ FEATURE_TOTAL = POSE_SIZE + LH_SIZE + RH_SIZE
 
 assert FEATURE_TOTAL == FEAT_DIM, f"FEAT_DIM ต้องเท่ากับ {FEATURE_TOTAL} (Pose132+LH63+RH63)"
 
-# Config (Aggressive for Mobile / Varied)
-NOISE_STD = 0.05
-MAX_SHIFT_FRAMES = 5
-JOINT_DROP_PROB = 0.10
-SCALE_RANGE = (0.80, 1.20)
-TRANSLATE_STD = 0.05
+# ==========================================================
+# Config (Safe Mode: ป้องกันพิกัดระเบิดและรักษารูปทรงกายวิภาค)
+# ==========================================================
+NOISE_STD = 0.02          # 🔻 ลดจาก 0.05: สั่นพิกัดแค่ 2% ป้องกันนิ้วมือพันกันมั่ว
+MAX_SHIFT_FRAMES = 3      # 🔻 ลดจาก 5: เลื่อนเวลาแค่ 3 เฟรม (ประมาณ 0.1 วินาที) ไม่ให้ท่าทางขาดหาย
+JOINT_DROP_PROB = 0.05    # 🔻 ลดจาก 0.10: จำลองจุดหลุดแค่ 5% เพื่อรักษารูปทรงลำตัวและมือไว้
+SCALE_RANGE = (0.80, 1.20)# 🔻 ลดจาก (0.50, 1.50): ซูมเข้า/ออกแค่ 20% ป้องกันพิกัดทะลุขอบจอ (แก้ปัญหา Outlier ได้ 100%)
+TRANSLATE_STD = 0.03      # 🔻 ลดจาก 0.05: ขยับซ้ายขวาบนล่างแค่ 3%
 
-TIME_WARP_RANGE = (0.70, 1.30)
-PARTIAL_KEEP_RANGE = (0.75, 0.95)
-PREFIX_MAX_FRAMES = 3
-SUFFIX_MAX_FRAMES = 3
-LOW_FPS_DROP_RATE = 0.5 
-
+TIME_WARP_RANGE = (0.85, 1.15) # 🔻 ลดจาก (0.70, 1.30): เร่ง/ลดความเร็วแค่ 15% ให้ดูเป็นธรรมชาติ
+PARTIAL_KEEP_RANGE = (0.85, 0.95) # 🔻 ลดจาก (0.75, 0.95): ตัดเฟรมทิ้งไม่เกิน 15% 
+PREFIX_MAX_FRAMES = 2     # 🔻 ลดจาก 3
+SUFFIX_MAX_FRAMES = 2     # 🔻 ลดจาก 3
+LOW_FPS_DROP_RATE = 0.3   # 🔻 ลดจาก 0.5: จำลองกล้องกระตุกแค่ 30% ถ้า 50% มันจะดูเหมือนภาพค้าง
 NO_ACTION_CLASS_NAME = "no_action"
 
 random.seed(RANDOM_SEED)
@@ -77,9 +76,16 @@ RH_Y_IDX = RH_START + np.arange(1, RH_SIZE, 3)
 RH_Z_IDX = RH_START + np.arange(2, RH_SIZE, 3)
 
 # Pair สำหรับ Flip สลับซ้ายขวา
-POSE_FLIP_PAIRS = np.array(
-    [(11, 12), (13, 14), (15, 16), (23, 24), (25, 26), (27, 28), (29, 30), (31, 32)]
-)
+POSE_FLIP_PAIRS = np.array([
+    # ใบหน้า (Face)
+    (1, 4), (2, 5), (3, 6), (7, 8), (9, 10),
+    # แขน (Arms)
+    (11, 12), (13, 14), (15, 16),
+    # มือที่ติดมากับ Pose (Hands in Pose) 🔥 จุดนี้คนมักลืม
+    (17, 18), (19, 20), (21, 22),
+    # ขาและเท้า (Legs & Feet)
+    (23, 24), (25, 26), (27, 28), (29, 30), (31, 32)
+])
 POSE_FLIP_INDICES = []
 for l_idx, r_idx in POSE_FLIP_PAIRS:
     for d in range(POSE_DIM): # วน 0,1,2,3 (x,y,z,vis)
@@ -145,8 +151,21 @@ def horizontal_flip_sequence(seq: np.ndarray) -> np.ndarray:
 
 
 def add_gaussian_noise(seq: np.ndarray, std: float = NOISE_STD) -> np.ndarray:
+    noisy_seq = seq.copy()
     noise = np.random.normal(loc=0.0, scale=std, size=seq.shape)
-    return seq + noise
+    
+    # รวม Index ของแกน X, Y, Z เท่านั้น (ข้าม POSE_VIS_IDX ไป)
+    xyz_idx = np.concatenate([
+        POSE_X_IDX, POSE_Y_IDX, POSE_Z_IDX, 
+        LH_X_IDX, LH_Y_IDX, LH_Z_IDX, 
+        RH_X_IDX, RH_Y_IDX, RH_Z_IDX
+    ])
+    
+    # เติม Noise เฉพาะพิกัด ไม่ยุ่งกับ Visibility
+    for t in range(noisy_seq.shape[0]):
+        noisy_seq[t, xyz_idx] += noise[t, xyz_idx]
+        
+    return noisy_seq
 
 
 def temporal_shift(seq: np.ndarray, max_shift: int = MAX_SHIFT_FRAMES) -> np.ndarray:

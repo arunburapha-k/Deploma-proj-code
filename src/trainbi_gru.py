@@ -32,7 +32,7 @@ from tensorflow.keras.optimizers import Adam
 import tensorflow.keras.backend as K
 
 # ---------------- 0) EXPERIMENT CONFIG ----------------
-EXPERIMENT_NAME = "bi-gru-v1.1.1"
+EXPERIMENT_NAME = "bi-gru-v1.2.3"
 RNN_TYPE = "gru"
 
 # --- FIXED HYPERPARAMETERS (กำหนดค่าเองตามต้องการ) ---
@@ -40,17 +40,19 @@ CONV_FILTERS = 256
 CONV_KERNEL = 3
 RNN_UNITS = 64
 DENSE_UNITS1 = 128
-SPATIAL_DROPOUT_RATE = 0.6
-DROPOUT_RATE = 0.6
+SPATIAL_DROPOUT_RATE = 0.5
+DROPOUT_RATE = 0.5
 
 LEARNING_RATE = 1e-3
 NUM_EPOCHS = 50
-BATCH_SIZE = 16
+BATCH_SIZE = 64
 
 # class balancing
-USE_CLASS_WEIGHT = True
+USE_CLASS_WEIGHT = False
 USE_BALANCED_SAMPLING = True
 
+sequence_length = 30
+num_features = 258
 
 # ---------------- 1) CONFIG พื้นฐาน ----------------
 DATA_DIR = "data"
@@ -58,19 +60,20 @@ TRAIN_DIR = os.path.join(DATA_DIR, "processed_train")
 VAL_DIR = os.path.join(DATA_DIR, "processed_val")
 TEST_DIR = os.path.join(DATA_DIR, "processed_test")
 
-# ⚠️ อย่าลืมแก้ชื่อท่าตรงนี้ให้ครบนะครับ
 actions = np.array(
     [
+        "anxiety",
         "fever",
         "feverish",
         "insomnia",
+        "itching",
         "no_action",
+        "polyuria",
+        "suffocated",
         "wounded",
     ]
 )
 
-sequence_length = 30
-num_features = 258
 
 SEED = 42
 np.random.seed(SEED)

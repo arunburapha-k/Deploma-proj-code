@@ -74,23 +74,22 @@ PROCESSED_DATA_PATH = os.path.join("data", "processed")
 # รายชื่อท่าทาง
 actions = np.array(
     [
-        "anxiety",
-        "cramps",
-        "diarrhea",
-        "fed_up_food",
-        "fever",
-        "feverish",
-        "food_allergy",
-        "insomnia",
-        "itching",
-        "no_action",
-        "pain",
-        "polyuria" "red_eye",
-        "suffocated",
-        "swollen",
-        "vertigo",
+        # "anxiety",
+        # "fever",
+        # "feverish",
+        # "insomnia",
+        # "itching",
+        # "no_action",
+        # "polyuria",
+        # "suffocated",
+        # "wounded",
+        "breathing_difficulty_p",
+        "fever_p",
+        "polyuria_p",
     ]
 )
+
+
 
 sequence_length = 30
 num_features = 258
@@ -99,7 +98,7 @@ for action in actions:
     os.makedirs(os.path.join(PROCESSED_DATA_PATH, action), exist_ok=True)
 print(f"Ensured '{PROCESSED_DATA_PATH}' folders exist.")
 
-print("--- Starting Video Preprocessing (Relative + Smooth Tracking) ---")
+print("--- Starting Video Preprocessing ---")
 
 # 🔥 อัปเกรด: ใช้ model_complexity=2 และบังคับใช้ Tracker
 with mp_holistic.Holistic(
@@ -139,7 +138,7 @@ with mp_holistic.Holistic(
                 success, frame = cap.read()
                 if not success:
                     break
-
+                # Mirror
                 frame = cv2.flip(frame, 1)
                 results = mediapipe_process(frame, holistic)
 
