@@ -63,6 +63,7 @@ TEST_DIR = os.path.join(DATA_DIR, "processed_test")
 actions = np.array(
     [
         "anxiety",
+        "breathing_difficulty",
         "fever",
         "feverish",
         "insomnia",

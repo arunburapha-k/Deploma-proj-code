@@ -1,4 +1,3 @@
-fever feverish no_action wounded
 LIBRARY              | INSTALLED       | STATUS    
 --------------------------------------------------
 tensorflow           | 2.17.0
@@ -13,3 +12,16 @@ matplotlib           | 3.10.8
 --------------------------------------------------
 Python               | 3.11.0
 --------------------------------------------------
+
+{
+    "0": "anxiety",
+    "1": "breathing_difficulty", preme
+    "2": "fever", preme
+    "3": "feverish",
+    "4": "insomnia",
+    "5": "itching",
+    "6": "no_action",
+    "7": "polyuria", preme 
+    "8": "suffocated",
+    "9": "wounded"
+}

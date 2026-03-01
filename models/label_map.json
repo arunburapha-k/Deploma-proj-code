@@ -1,6 +1,12 @@
 {
-    "0": "fever",
-    "1": "feverish",
-    "2": "no_action",
-    "3": "wounded"
+    "0": "anxiety",
+    "1": "breathing_difficulty",
+    "2": "fever",
+    "3": "feverish",
+    "4": "insomnia",
+    "5": "itching",
+    "6": "no_action",
+    "7": "polyuria",
+    "8": "suffocated",
+    "9": "wounded"
 }

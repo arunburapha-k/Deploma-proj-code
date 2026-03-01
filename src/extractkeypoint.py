@@ -84,8 +84,8 @@ actions = np.array(
         # "suffocated",
         # "wounded",
         "breathing_difficulty_p",
-        "fever_p",
-        "polyuria_p",
+        # "fever_p",
+        # "polyuria_p",
     ]
 )
 
